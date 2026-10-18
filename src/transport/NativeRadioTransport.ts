@@ -204,6 +204,12 @@ export class NativeRadioTransport implements ITransport {
     return { bluetoothEnabled: true, locationEnabled: true };
   }
 
+  public async openLocationSettings(): Promise<void> {
+    if (Platform.OS === 'android' && RadiiNativeRadio?.openLocationSettings) {
+      await RadiiNativeRadio.openLocationSettings();
+    }
+  }
+
   public async startDiscovery(): Promise<void> {
     this.isScanning = true;
     if (Platform.OS === 'android' && RadiiNativeRadio?.startScanning) {

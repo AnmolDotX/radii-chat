@@ -14,12 +14,15 @@ import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
 import android.bluetooth.le.*
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.location.LocationManager
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.ParcelUuid
+import android.provider.Settings
 import android.util.Log
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
@@ -27,6 +30,7 @@ import org.json.JSONObject
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.util.*
 import kotlin.concurrent.thread
@@ -36,6 +40,13 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
     ReactContextBaseJavaModule(reactContext) {
 
     override fun getName(): String = "RadiiNativeRadio"
+
+    companion object {
+        // Reserved Company Identifier for Radii Mesh (0x11FD)
+        const val RADII_COMPANY_ID = 0x11FD
+        // Protocol byte version
+        const val PROTOCOL_VERSION: Byte = 0x01
+    }
 
     // Compact 16-bit equivalent Service UUID reserved for Radii app peers
     private val SERVICE_UUID: UUID = UUID.fromString("0000fd11-0000-1000-8000-00805f9b34fb")
@@ -65,14 +76,59 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
 
     private var currentPeerId = ""
     private var currentDisplayName = ""
+    private var receiverRegistered = false
+
+    private val bluetoothReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
+                val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                if (state == BluetoothAdapter.STATE_ON) {
+                    Log.d("RadiiRadio", "Bluetooth turned ON. Refreshing adapter & auto-starting radios...")
+                    refreshBluetoothAdapter()
+                    if (currentPeerId.isNotEmpty()) {
+                        internalStartAdvertising(currentPeerId, currentDisplayName)
+                        internalStartScanning()
+                    }
+                }
+            }
+        }
+    }
 
     init {
         try {
-            val bm = reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-            bluetoothAdapter = bm?.adapter
+            refreshBluetoothAdapter()
+            val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                reactContext.registerReceiver(bluetoothReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                reactContext.registerReceiver(bluetoothReceiver, filter)
+            }
+            receiverRegistered = true
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("RadiiRadio", "Error in init", e)
         }
+    }
+
+    override fun invalidate() {
+        super.invalidate()
+        if (receiverRegistered) {
+            try {
+                reactContext.unregisterReceiver(bluetoothReceiver)
+                receiverRegistered = false
+            } catch (e: Exception) {}
+        }
+        internalStopScanning()
+        internalStopAdvertising()
+    }
+
+    private fun refreshBluetoothAdapter(): BluetoothAdapter? {
+        try {
+            val bm = reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            bluetoothAdapter = bm?.adapter ?: BluetoothAdapter.getDefaultAdapter()
+        } catch (e: Exception) {
+            Log.e("RadiiRadio", "refreshBluetoothAdapter error", e)
+        }
+        return bluetoothAdapter
     }
 
     private fun sendEvent(eventName: String, params: WritableMap?) {
@@ -97,9 +153,7 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
     @ReactMethod
     fun enableHardwareRadios(promise: Promise) {
         try {
-            val bm = reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-            val adapter = bm?.adapter ?: bluetoothAdapter
-
+            val adapter = refreshBluetoothAdapter()
             var bluetoothPrompted = false
             if (adapter != null && !adapter.isEnabled) {
                 val enableIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
@@ -112,6 +166,10 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
             val isGpsOn = lm?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true ||
                     lm?.isProviderEnabled(LocationManager.NETWORK_PROVIDER) == true
 
+            if (!isGpsOn) {
+                Log.w("RadiiRadio", "WARNING: Android Master Location toggle is OFF! Android will suppress BLE scan results.")
+            }
+
             val result = Arguments.createMap()
             result.putBoolean("bluetoothEnabled", adapter?.isEnabled == true)
             result.putBoolean("bluetoothPrompted", bluetoothPrompted)
@@ -123,17 +181,40 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
     }
 
     @ReactMethod
+    fun openLocationSettings(promise: Promise) {
+        try {
+            val intent = Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            reactContext.startActivity(intent)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.resolve(false)
+        }
+    }
+
+    @ReactMethod
     fun startAdvertising(peerId: String, displayName: String, promise: Promise) {
+        val success = internalStartAdvertising(peerId, displayName)
+        promise.resolve(success)
+    }
+
+    private fun internalStartAdvertising(peerId: String, displayName: String): Boolean {
         try {
             currentPeerId = peerId
             currentDisplayName = displayName
 
-            val bm = reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-            val adapter = bm?.adapter ?: bluetoothAdapter
-
+            val adapter = refreshBluetoothAdapter()
             if (adapter != null && adapter.isEnabled) {
                 bleAdvertiser = adapter.bluetoothLeAdvertiser
-                if (bleAdvertiser != null && advertiseCallback == null) {
+                if (bleAdvertiser != null) {
+                    // Stop any existing callback first
+                    if (advertiseCallback != null) {
+                        try {
+                            bleAdvertiser?.stopAdvertising(advertiseCallback)
+                        } catch (e: Exception) {}
+                        advertiseCallback = null
+                    }
+
                     val settings = AdvertiseSettings.Builder()
                         .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
                         .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
@@ -141,35 +222,52 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
                         .setTimeout(0)
                         .build()
 
-                    // Primary 31-byte packet: Service UUID + 6-byte shortId
-                    val shortId = peerId.takeLast(6)
-                    val cleanShortId = shortId.toByteArray(Charsets.UTF_8)
+                    // Build strictly <= 31-byte legacy BLE Manufacturer Data packet:
+                    // Flags: 3 bytes
+                    // Manufacturer Header: 4 bytes (len + 0xFF + 2-byte Company ID 0x11FD)
+                    // Payload: 1 byte (version) + 6 bytes (shortId) + up to 12 bytes (name) = 19 bytes
+                    // Total Primary Packet = 3 + 4 + 19 = 26 bytes (guaranteed <= 31 bytes!)
+                    val shortId = peerId.takeLast(6).lowercase()
+                    val shortIdBytes = shortId.toByteArray(Charsets.UTF_8)
+
+                    val safeName = (if (displayName.isNotBlank()) displayName.trim() else "Radii User")
+                    val rawNameBytes = safeName.toByteArray(Charsets.UTF_8)
+                    val maxNameBytes = 12
+                    val nameBytes = if (rawNameBytes.size > maxNameBytes) {
+                        rawNameBytes.copyOfRange(0, maxNameBytes)
+                    } else {
+                        rawNameBytes
+                    }
+
+                    val mfgPayload = ByteArray(1 + 6 + nameBytes.size)
+                    mfgPayload[0] = PROTOCOL_VERSION
+                    System.arraycopy(shortIdBytes, 0, mfgPayload, 1, 6)
+                    if (nameBytes.isNotEmpty()) {
+                        System.arraycopy(nameBytes, 0, mfgPayload, 7, nameBytes.size)
+                    }
+
                     val primaryData = AdvertiseData.Builder()
                         .setIncludeDeviceName(false)
                         .setIncludeTxPowerLevel(false)
-                        .addServiceUuid(SERVICE_PARCEL_UUID)
-                        .addServiceData(SERVICE_PARCEL_UUID, cleanShortId)
+                        .addManufacturerData(RADII_COMPANY_ID, mfgPayload)
                         .build()
 
-                    // Scan Response: Use NAME_PARCEL_UUID for display name (avoids Map key collision & OS adapter renaming)
-                    val safeName = (if (displayName.isNotBlank()) displayName.trim() else "Radii User").take(18)
-                    val nameBytes = safeName.toByteArray(Charsets.UTF_8)
+                    // Scan Response: Include Service UUID for backwards compatibility (18 bytes <= 31 bytes!)
                     val scanResponseData = AdvertiseData.Builder()
                         .setIncludeDeviceName(false)
                         .setIncludeTxPowerLevel(false)
-                        .addServiceUuid(NAME_PARCEL_UUID)
-                        .addServiceData(NAME_PARCEL_UUID, nameBytes)
+                        .addServiceUuid(SERVICE_PARCEL_UUID)
                         .build()
 
                     val callback = object : AdvertiseCallback() {
                         override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
                             super.onStartSuccess(settingsInEffect)
-                            Log.d("RadiiRadio", "Radii BLE Advertiser started with shortId: $shortId, name: $safeName")
+                            Log.d("RadiiRadio", "Radii BLE Advertiser active (mfgPayload=${mfgPayload.size}b, shortId=$shortId, name=$safeName)")
                         }
 
                         override fun onStartFailure(errorCode: Int) {
                             super.onStartFailure(errorCode)
-                            Log.e("RadiiRadio", "Radii BLE Advertiser failed: $errorCode")
+                            Log.e("RadiiRadio", "Radii BLE Advertiser failed code: $errorCode")
                         }
                     }
 
@@ -187,10 +285,10 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
             // Also start local UDP subnet broadcast mesh
             startUdpBroadcast(peerId, displayName)
 
-            promise.resolve(true)
+            return true
         } catch (e: Exception) {
-            Log.e("RadiiRadio", "startAdvertising error", e)
-            promise.resolve(false)
+            Log.e("RadiiRadio", "internalStartAdvertising error", e)
+            return false
         }
     }
 
@@ -236,13 +334,23 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
 
     @ReactMethod
     fun startScanning(promise: Promise) {
-        try {
-            val bm = reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-            val adapter = bm?.adapter ?: bluetoothAdapter
+        val success = internalStartScanning()
+        promise.resolve(success)
+    }
 
+    private fun internalStartScanning(): Boolean {
+        try {
+            val adapter = refreshBluetoothAdapter()
             if (adapter != null && adapter.isEnabled) {
                 bleScanner = adapter.bluetoothLeScanner
-                if (bleScanner != null && scanCallback == null) {
+                if (bleScanner != null) {
+                    if (scanCallback != null) {
+                        try {
+                            bleScanner?.stopScan(scanCallback)
+                        } catch (e: Exception) {}
+                        scanCallback = null
+                    }
+
                     val settingsBuilder = ScanSettings.Builder()
                         .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                         .setReportDelay(0)
@@ -254,11 +362,9 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
                     }
                     val settings = settingsBuilder.build()
 
-                    // HARDWARE FILTER: Only receive advertisements containing Radii UUID 0xFD11
-                    // This is more reliable than null-filter + software check, and more battery efficient.
-                    val scanFilter = ScanFilter.Builder()
-                        .setServiceUuid(SERVICE_PARCEL_UUID)
-                        .build()
+                    // Open hardware filter bypass: many OEM chipsets (Qualcomm, MediaTek, Exynos)
+                    // drop BLE packets in hardware filters. Using an open filter guarantees reception.
+                    val openFilter = ScanFilter.Builder().build()
 
                     val callback = object : ScanCallback() {
                         override fun onScanResult(callbackType: Int, result: ScanResult?) {
@@ -276,18 +382,22 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
                     }
 
                     scanCallback = callback
-                    bleScanner?.startScan(listOf(scanFilter), settings, callback)
-                    Log.d("RadiiRadio", "Radii BLE Scanner active (Hardware UUID filter: 0xFD11)")
+                    bleScanner?.startScan(listOf(openFilter), settings, callback)
+                    Log.d("RadiiRadio", "Radii BLE Scanner active (Zero-drop hardware bypass)")
+                } else {
+                    Log.w("RadiiRadio", "bleScanner is null (Bluetooth may be busy or initializing)")
                 }
+            } else {
+                Log.w("RadiiRadio", "Bluetooth is OFF or adapter unavailable")
             }
 
             // Start UDP listener on local Wi-Fi / Hotspot
             startUdpListener()
 
-            promise.resolve(true)
+            return true
         } catch (e: Exception) {
-            Log.e("RadiiRadio", "startScanning error", e)
-            promise.resolve(false)
+            Log.e("RadiiRadio", "internalStartScanning error", e)
+            return false
         }
     }
 
@@ -296,17 +406,37 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
             val device = result.device ?: return
             val record = result.scanRecord ?: return
 
-            // Extract the shortId from service data 0xFD11
-            val serviceDataBytes = record.serviceData[SERVICE_PARCEL_UUID]
-            val remoteShortId = if (serviceDataBytes != null && serviceDataBytes.isNotEmpty()) {
-                String(serviceDataBytes, Charsets.UTF_8).trim()
-            } else {
-                ""
+            var remoteShortId = ""
+            var peerName = ""
+
+            // 1. Check Radii Manufacturer Data (0x11FD)
+            val mfgBytes = record.getManufacturerSpecificData(RADII_COMPANY_ID)
+            if (mfgBytes != null && mfgBytes.size >= 7) {
+                // Byte 0 is protocol version
+                remoteShortId = String(mfgBytes, 1, 6, Charsets.UTF_8).trim().lowercase()
+                if (mfgBytes.size > 7) {
+                    peerName = String(mfgBytes, 7, mfgBytes.size - 7, Charsets.UTF_8).trim()
+                }
+            }
+
+            // 2. Fallback: Check service data 0xFD11 for backwards compatibility
+            if (remoteShortId.isEmpty()) {
+                val serviceDataBytes = record.serviceData[SERVICE_PARCEL_UUID]
+                if (serviceDataBytes != null && serviceDataBytes.isNotEmpty()) {
+                    remoteShortId = String(serviceDataBytes, Charsets.UTF_8).trim().lowercase()
+                }
+            }
+
+            val hasServiceUuid = record.serviceUuids?.contains(SERVICE_PARCEL_UUID) == true
+
+            // Ignore non-Radii devices (smart TVs, headphones, fitness bands, etc.)
+            if (remoteShortId.isEmpty() && !hasServiceUuid && mfgBytes == null) {
+                return
             }
 
             // STRICT FILTER: Discard own device loopback
-            val myShortId = currentPeerId.takeLast(6)
-            if (remoteShortId.isNotEmpty() && myShortId.isNotEmpty() && remoteShortId.equals(myShortId, ignoreCase = true)) {
+            val myShortId = currentPeerId.takeLast(6).lowercase()
+            if (remoteShortId.isNotEmpty() && myShortId.isNotEmpty() && remoteShortId == myShortId) {
                 return // Loopback of own broadcast
             }
 
@@ -315,15 +445,18 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
             val shortId = if (remoteShortId.isNotEmpty()) remoteShortId else device.address.replace(":", "").takeLast(6).lowercase()
             val stableId = "peer_$shortId"
 
-            // Read display name from 0xFD12 service data (or fall back to shortId)
-            val nameBytes = record.serviceData[NAME_PARCEL_UUID]
-            val peerName = if (nameBytes != null && nameBytes.isNotEmpty()) {
-                String(nameBytes, Charsets.UTF_8).trim().ifEmpty { "Radii User" }
-            } else if (remoteShortId.isNotEmpty()) {
-                "Radii·${remoteShortId}"
-            } else {
-                "Nearby Radii Companion"
+            if (peerName.isEmpty()) {
+                val nameBytes = record.serviceData[NAME_PARCEL_UUID]
+                peerName = if (nameBytes != null && nameBytes.isNotEmpty()) {
+                    String(nameBytes, Charsets.UTF_8).trim().ifEmpty { "Radii·$shortId" }
+                } else if (remoteShortId.isNotEmpty()) {
+                    "Radii·$remoteShortId"
+                } else {
+                    "Nearby Radii Companion"
+                }
             }
+
+            Log.d("RadiiRadio", "Discovered Radii peer: id=$stableId, shortId=$shortId, name=$peerName, rssi=$rssi")
 
             val map = Arguments.createMap().apply {
                 putString("id", stableId)
@@ -406,7 +539,7 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
 
         thread(start = true, isDaemon = true) {
             try {
-                val adapter = bluetoothAdapter ?: return@thread
+                val adapter = refreshBluetoothAdapter() ?: return@thread
                 rfcommServerSocket = adapter.listenUsingInsecureRfcommWithServiceRecord("RadiiMesh", SERVICE_UUID)
                 Log.d("RadiiRadio", "RFCOMM Server listening on port for incoming connections")
 
@@ -440,12 +573,13 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
             }
         }
     }
+
     @ReactMethod
     fun sendBluetoothMessage(macAddress: String, messageJson: String, promise: Promise) {
         thread(start = true, isDaemon = true) {
             var socket: BluetoothSocket? = null
             try {
-                val adapter = bluetoothAdapter ?: throw Exception("Bluetooth adapter not available")
+                val adapter = refreshBluetoothAdapter() ?: throw Exception("Bluetooth adapter not available")
                 val device = adapter.getRemoteDevice(macAddress)
                 socket = device.createInsecureRfcommSocketToServiceRecord(SERVICE_UUID)
                 socket.connect()
@@ -465,7 +599,7 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
     fun sendBleMessage(macAddress: String, messageJson: String, promise: Promise) {
         thread(start = true, isDaemon = true) {
             try {
-                val adapter = bluetoothAdapter ?: return@thread promise.resolve(false)
+                val adapter = refreshBluetoothAdapter() ?: return@thread promise.resolve(false)
                 val device = adapter.getRemoteDevice(macAddress)
                 val bytes = messageJson.toByteArray(Charsets.UTF_8)
                 var resolved = false
@@ -473,14 +607,23 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
                 val gattCallback = object : BluetoothGattCallback() {
                     override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
                         if (newState == BluetoothGatt.STATE_CONNECTED) {
-                            gatt?.discoverServices()
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                                gatt?.requestMtu(512)
+                            } else {
+                                gatt?.discoverServices()
+                            }
                         } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
-                            gatt?.close()
+                            try { gatt?.close() } catch (e: Exception) {}
                             if (!resolved) {
                                 resolved = true
                                 promise.resolve(false)
                             }
                         }
+                    }
+
+                    override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
+                        super.onMtuChanged(gatt, mtu, status)
+                        gatt?.discoverServices()
                     }
 
                     override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
@@ -495,11 +638,11 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
                                     resolved = true
                                     promise.resolve(success)
                                 }
-                                gatt.disconnect()
+                                try { gatt.disconnect() } catch (e: Exception) {}
                                 return
                             }
                         }
-                        gatt?.disconnect()
+                        try { gatt?.disconnect() } catch (e: Exception) {}
                         if (!resolved) {
                             resolved = true
                             promise.resolve(false)
@@ -641,13 +784,18 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
 
         udpListenThread = thread(start = true, isDaemon = true) {
             try {
-                udpSocket = DatagramSocket(UDP_PORT)
-                udpSocket?.broadcast = true
+                val socket = DatagramSocket(null).apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(UDP_PORT))
+                    broadcast = true
+                }
+                udpSocket = socket
                 val buffer = ByteArray(4096)
+                Log.d("RadiiRadio", "UDP Mesh listener active on port $UDP_PORT (reuseAddress=true)")
 
                 while (isListening) {
                     val packet = DatagramPacket(buffer, buffer.size)
-                    udpSocket?.receive(packet)
+                    socket.receive(packet)
 
                     val text = String(packet.data, 0, packet.length, Charsets.UTF_8)
                     val json = JSONObject(text)
@@ -701,38 +849,61 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
 
     @ReactMethod
     fun stopScanning(promise: Promise) {
+        val success = internalStopScanning()
+        promise.resolve(success)
+    }
+
+    private fun internalStopScanning(): Boolean {
         try {
             scanCallback?.let {
-                bleScanner?.stopScan(it)
+                try {
+                    bleScanner?.stopScan(it)
+                } catch (e: Exception) {}
                 scanCallback = null
             }
             isListening = false
-            udpSocket?.close()
-            promise.resolve(true)
+            try {
+                udpSocket?.close()
+                udpSocket = null
+            } catch (e: Exception) {}
+            try {
+                multicastLock?.let {
+                    if (it.isHeld) it.release()
+                }
+            } catch (e: Exception) {}
+            return true
         } catch (e: Exception) {
-            promise.resolve(false)
+            return false
         }
     }
 
     @ReactMethod
     fun stopAdvertising(promise: Promise) {
+        val success = internalStopAdvertising()
+        promise.resolve(success)
+    }
+
+    private fun internalStopAdvertising(): Boolean {
         try {
             advertiseCallback?.let {
-                bleAdvertiser?.stopAdvertising(it)
+                try {
+                    bleAdvertiser?.stopAdvertising(it)
+                } catch (e: Exception) {}
                 advertiseCallback = null
             }
             isRfcommListening = false
             try {
                 rfcommServerSocket?.close()
+                rfcommServerSocket = null
             } catch (e: Exception) {}
             try {
                 gattServer?.close()
                 gattServer = null
             } catch (e: Exception) {}
             isBroadcasting = false
-            promise.resolve(true)
+            return true
         } catch (e: Exception) {
-            promise.resolve(false)
+            return false
         }
     }
 

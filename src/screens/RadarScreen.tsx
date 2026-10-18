@@ -62,14 +62,6 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
   const [maxPeersFilter, setMaxPeersFilter] = useState<number | 'all'>(10);
   const [isRadioActive, setIsRadioActive] = useState<boolean>(true);
 
-  React.useEffect(() => {
-    if (myProfile.visibility === 'everyone') {
-      const timer = setTimeout(() => {
-        updateUserProfile({ visibility: 'contacts' });
-      }, 10 * 60 * 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [myProfile.visibility, updateUserProfile]);
 
   const unpairedRadarPeers = peers.filter((p) => !p.isPaired);
   const pairedPeers = peers.filter((p) => p.isPaired);

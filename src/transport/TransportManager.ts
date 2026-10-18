@@ -45,6 +45,12 @@ export class TransportManager {
     return { bluetoothEnabled: true, locationEnabled: true };
   }
 
+  public async openLocationSettings(): Promise<void> {
+    if (this.activeTransport && 'openLocationSettings' in this.activeTransport) {
+      return (this.activeTransport as any).openLocationSettings();
+    }
+  }
+
   public async start(): Promise<void> {
     await this.enableHardwareRadios();
     await this.activeTransport.startDiscovery();
