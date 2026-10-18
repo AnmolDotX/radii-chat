@@ -54,16 +54,16 @@ export const ShareApkModal: React.FC<ShareApkModalProps> = ({
             <View style={[styles.iconBadge, { backgroundColor: theme.accentCyanMuted }]}>
               <Text style={styles.icon}>📦</Text>
             </View>
-            <Text style={[styles.title, { color: theme.text }]}>Share Orbitor APK Offline</Text>
+            <Text style={[styles.title, { color: theme.text }]}>Share Radii APK Offline</Text>
             <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-              Send the full Orbitor Android APK directly to friends via Nearby/Bluetooth. No internet, Play Store, or data required.
+              Send the full Radii Android APK directly to friends via Nearby/Bluetooth. No internet, Play Store, or data required.
             </Text>
           </View>
 
           <View style={[styles.infoBox, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}>
             <View style={styles.infoRow}>
               <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>Package</Text>
-              <Text style={[styles.infoVal, { color: theme.text }]}>orbitor-v1.1-release.apk</Text>
+              <Text style={[styles.infoVal, { color: theme.text }]}>radii-app-release.apk</Text>
             </View>
             <View style={styles.infoRow}>
               <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>Size</Text>

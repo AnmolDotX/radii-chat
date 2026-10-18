@@ -30,7 +30,7 @@ export const Badge: React.FC<BadgeProps> = ({
       case 'nearby':
         activeVariant = 'cyan';
         break;
-      case 'lan':
+      case 'location':
         activeVariant = 'green';
         break;
       case 'link':

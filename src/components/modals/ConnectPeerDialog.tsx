@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, Modal, Pressable, ActivityIndicator } from 'react-native';
 import { useOrbitorTheme, Typography, Radius, Spacing } from '../../theme';
 import { Peer } from '../../core/types';
 import { PeerAvatar } from '../common/PeerAvatar';
 import { Badge } from '../common/Badge';
+import { useOrbitor } from '../../context/OrbitorContext';
 
 interface ConnectPeerDialogProps {
   peer: Peer | null;
@@ -19,96 +20,201 @@ export const ConnectPeerDialog: React.FC<ConnectPeerDialogProps> = ({
   onSuccess,
 }) => {
   const theme = useOrbitorTheme();
-  const [status, setStatus] = useState<'idle' | 'pairing' | 'success' | 'error'>('idle');
+  const {
+    requestConnection,
+    connectionStateMap,
+    verificationCodeMap,
+    cancelConnectionRequest,
+  } = useOrbitor();
+
+  const peerId = peer?.id || '';
+  const shortId = (peer?.shortId || peerId.slice(-6)).toLowerCase();
+  const canonicalId = `peer_${shortId}`;
+  const currentStatus =
+    connectionStateMap[canonicalId] ||
+    connectionStateMap[peerId] ||
+    connectionStateMap[`ble_${shortId}`] ||
+    'idle';
+  const verificationCode =
+    verificationCodeMap[canonicalId] ||
+    verificationCodeMap[peerId] ||
+    verificationCodeMap[`ble_${shortId}`] ||
+    '----';
 
   useEffect(() => {
-    if (visible) {
-      setStatus('idle');
+    if (currentStatus === 'accepted' && peer) {
+      const timer = setTimeout(() => {
+        onSuccess(peer);
+        onClose();
+      }, 1500);
+      return () => clearTimeout(timer);
     }
-  }, [visible]);
+  }, [currentStatus, peer, onSuccess, onClose]);
 
   if (!peer) return null;
 
-  const handleConnect = () => {
-    setStatus('pairing');
+  const handleSendRequest = () => {
+    requestConnection(peer);
+  };
 
-    // Simulate direct radio handshake
-    setTimeout(() => {
-      setStatus('success');
-      setTimeout(() => {
-        onSuccess(peer);
-        onClose();
-      }, 1000);
-    }, 1800);
+  const handleCancel = () => {
+    cancelConnectionRequest(peerId);
+    cancelConnectionRequest(canonicalId);
+    onClose();
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleCancel}>
       <View style={styles.overlay}>
         <View
           style={[
             styles.sheet,
             {
               backgroundColor: theme.surface,
-              borderColor: status === 'success' ? theme.success : theme.border,
+              borderColor:
+                currentStatus === 'accepted'
+                  ? theme.success
+                  : currentStatus === 'waiting'
+                  ? theme.accentCyan
+                  : theme.border,
             },
           ]}>
           <View style={styles.header}>
-            <PeerAvatar peer={peer} size={52} showSignal={true} />
+            <PeerAvatar peer={peer} size={54} showSignal={true} />
             <Text style={[styles.title, { color: theme.text }]}>
-              {status === 'success' ? 'Connected Successfully!' : `Connect with ${peer.name}?`}
+              {currentStatus === 'accepted'
+                ? 'Connected Successfully!'
+                : currentStatus === 'waiting'
+                ? 'Waiting for Acceptance...'
+                : currentStatus === 'declined'
+                ? 'Connection Declined'
+                : `Connect with ${peer.name}?`}
             </Text>
             <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
               {peer.deviceName || peer.platform.toUpperCase()} · Direct {peer.activeTransport.toUpperCase()}
             </Text>
           </View>
 
-          {status === 'idle' && (
-            <View style={styles.buttonRow}>
+          {/* Idle State: Confirmation to Send Request */}
+          {currentStatus === 'idle' && (
+            <View style={styles.contentWrap}>
+              <Text style={[styles.bodyDescription, { color: theme.textSecondary }]}>
+                A mutual pairing request will be sent to {peer.name}. Once accepted, you can securely chat and fling files offline.
+              </Text>
+              <View style={styles.buttonRow}>
+                <Pressable
+                  onPress={handleCancel}
+                  style={({ pressed }) => [
+                    styles.cancelButton,
+                    {
+                      backgroundColor: theme.surfaceElevated,
+                      borderColor: theme.border,
+                      opacity: pressed ? 0.75 : 1,
+                    },
+                  ]}>
+                  <Text style={[styles.cancelText, { color: theme.textSecondary }]}>Cancel</Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={handleSendRequest}
+                  style={({ pressed }) => [
+                    styles.connectButton,
+                    {
+                      backgroundColor: theme.text,
+                      opacity: pressed ? 0.85 : 1,
+                    },
+                  ]}>
+                  <Text style={[styles.connectText, { color: theme.background }]}>
+                    Send Request
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+
+          {/* Waiting State: Request Sent, Waiting for other user to tap Accept */}
+          {currentStatus === 'waiting' && (
+            <View style={styles.loaderContainer}>
+              <ActivityIndicator size="small" color={theme.accentCyan} />
+              <Text style={[styles.pairingText, { color: theme.textSecondary }]}>
+                Request sent to {peer.name}. Waiting for them to accept on their phone...
+              </Text>
+
+              {/* Matching Security Code */}
+              <View style={[styles.pinBox, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}>
+                <Text style={[styles.pinLabel, { color: theme.textTertiary }]}>
+                  SECURITY VERIFICATION PIN
+                </Text>
+                <Text style={[styles.pinCode, { color: theme.accentCyan }]}>
+                  {verificationCode}
+                </Text>
+                <Text style={[styles.pinHint, { color: theme.textTertiary }]}>
+                  This 4-digit code will appear on {peer.name}&apos;s screen.
+                </Text>
+              </View>
+
               <Pressable
-                onPress={onClose}
+                onPress={handleCancel}
                 style={({ pressed }) => [
-                  styles.cancelButton,
+                  styles.cancelWaitButton,
                   {
                     backgroundColor: theme.surfaceElevated,
                     borderColor: theme.border,
                     opacity: pressed ? 0.75 : 1,
                   },
                 ]}>
-                <Text style={[styles.cancelText, { color: theme.textSecondary }]}>Cancel</Text>
-              </Pressable>
-
-              <Pressable
-                onPress={handleConnect}
-                style={({ pressed }) => [
-                  styles.connectButton,
-                  {
-                    backgroundColor: theme.text,
-                    opacity: pressed ? 0.85 : 1,
-                  },
-                ]}>
-                <Text style={[styles.connectText, { color: theme.background }]}>
-                  Connect
+                <Text style={[styles.cancelWaitText, { color: theme.danger }]}>
+                  Cancel Request
                 </Text>
               </Pressable>
             </View>
           )}
 
-          {status === 'pairing' && (
-            <View style={styles.loaderContainer}>
-              <ActivityIndicator size="small" color={theme.accentCyan} />
-              <Text style={[styles.pairingText, { color: theme.textSecondary }]}>
-                Exchanging security tokens with {peer.name}...
-              </Text>
-            </View>
-          )}
-
-          {status === 'success' && (
+          {/* Accepted State: Partner confirmed */}
+          {currentStatus === 'accepted' && (
             <View style={styles.loaderContainer}>
               <Badge label="MUTUAL ACCEPTANCE VERIFIED" variant="green" size="md" />
               <Text style={[styles.successSubtext, { color: theme.textSecondary }]}>
-                Channel ready. Moving to Discovered list.
+                {peer.name} accepted your request. Added to Discovered Peers!
               </Text>
+              <Pressable
+                onPress={() => {
+                  onSuccess(peer);
+                  onClose();
+                }}
+                style={({ pressed }) => [
+                  styles.openChatButton,
+                  {
+                    backgroundColor: theme.text,
+                    opacity: pressed ? 0.85 : 1,
+                  },
+                ]}>
+                <Text style={[styles.openChatText, { color: theme.background }]}>
+                  Open Chat Now ↗
+                </Text>
+              </Pressable>
+            </View>
+          )}
+
+          {/* Declined State */}
+          {currentStatus === 'declined' && (
+            <View style={styles.loaderContainer}>
+              <Badge label="REQUEST DECLINED" variant="red" size="md" />
+              <Text style={[styles.errorSubtext, { color: theme.textSecondary }]}>
+                {peer.name} declined the connection request.
+              </Text>
+              <Pressable
+                onPress={handleCancel}
+                style={({ pressed }) => [
+                  styles.cancelWaitButton,
+                  {
+                    backgroundColor: theme.surfaceElevated,
+                    borderColor: theme.border,
+                    opacity: pressed ? 0.75 : 1,
+                  },
+                ]}>
+                <Text style={[styles.cancelWaitText, { color: theme.text }]}>Close</Text>
+              </Pressable>
             </View>
           )}
         </View>
@@ -138,15 +244,21 @@ const styles = StyleSheet.create({
     gap: Spacing.xs + 2,
   },
   title: {
-    fontSize: Typography.sizes.md + 1,
-    fontWeight: Typography.weights.bold,
-    fontFamily: Typography.fontFamily,
+    fontSize: Typography.sizes.lg,
+    fontWeight: '700',
     textAlign: 'center',
-    marginTop: 4,
   },
   subtitle: {
     fontSize: Typography.sizes.xs,
-    fontFamily: Typography.fontFamily,
+    fontFamily: Typography.monoFamily,
+    textAlign: 'center',
+  },
+  contentWrap: {
+    gap: Spacing.md,
+  },
+  bodyDescription: {
+    fontSize: Typography.sizes.sm,
+    lineHeight: 19,
     textAlign: 'center',
   },
   buttonRow: {
@@ -156,40 +268,90 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     flex: 1,
-    paddingVertical: Spacing.sm + 4,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
+    paddingVertical: Spacing.sm + 2,
     alignItems: 'center',
-    justifyContent: 'center',
+    borderRadius: Radius.full,
+    borderWidth: 1,
   },
   cancelText: {
     fontSize: Typography.sizes.sm,
-    fontFamily: Typography.fontFamily,
-    fontWeight: Typography.weights.medium,
+    fontWeight: '600',
   },
   connectButton: {
-    flex: 2,
-    paddingVertical: Spacing.sm + 4,
-    borderRadius: Radius.lg,
+    flex: 1.4,
+    paddingVertical: Spacing.sm + 2,
     alignItems: 'center',
-    justifyContent: 'center',
+    borderRadius: Radius.full,
   },
   connectText: {
     fontSize: Typography.sizes.sm,
-    fontWeight: Typography.weights.bold,
-    fontFamily: Typography.fontFamily,
+    fontWeight: '700',
   },
   loaderContainer: {
     alignItems: 'center',
-    paddingVertical: Spacing.md,
+    paddingVertical: Spacing.xs,
     gap: Spacing.sm,
   },
   pairingText: {
-    fontSize: Typography.sizes.xs + 1,
-    fontFamily: Typography.fontFamily,
+    fontSize: Typography.sizes.sm,
+    textAlign: 'center',
+    lineHeight: 19,
+  },
+  pinBox: {
+    width: '100%',
+    padding: Spacing.md,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    alignItems: 'center',
+    gap: Spacing.xs,
+    marginVertical: Spacing.xs,
+  },
+  pinLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  pinCode: {
+    fontSize: 28,
+    fontWeight: '800',
+    fontFamily: Typography.monoFamily,
+    letterSpacing: 6,
+  },
+  pinHint: {
+    fontSize: Typography.sizes.xs - 1,
+    textAlign: 'center',
+  },
+  cancelWaitButton: {
+    width: '100%',
+    paddingVertical: Spacing.sm,
+    alignItems: 'center',
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    marginTop: Spacing.xs,
+  },
+  cancelWaitText: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: '600',
   },
   successSubtext: {
-    fontSize: Typography.sizes.xs,
-    fontFamily: Typography.fontFamily,
+    fontSize: Typography.sizes.sm,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  errorSubtext: {
+    fontSize: Typography.sizes.sm,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  openChatButton: {
+    width: '100%',
+    paddingVertical: Spacing.sm + 3,
+    alignItems: 'center',
+    borderRadius: Radius.full,
+    marginTop: Spacing.xs,
+  },
+  openChatText: {
+    fontSize: Typography.sizes.sm,
+    fontWeight: '700',
   },
 });

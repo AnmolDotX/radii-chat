@@ -1,6 +1,6 @@
-export type TransportType = 'ble' | 'nearby' | 'lan' | 'link';
+export type TransportType = 'ble' | 'nearby' | 'location' | 'link';
 
-export type NetworkMode = 'offline' | 'lan' | 'internet';
+export type NetworkMode = 'offline' | 'online';
 
 export type DevicePlatform = 'android' | 'ios' | 'desktop';
 
@@ -21,11 +21,16 @@ export interface Peer {
   batteryLevel?: number;
   statusMessage?: string;
   currentRoomId?: string;
+  shortId?: string;
+  fullUserId?: string;
+  macAddress?: string;
+  ipAddress?: string;
 }
 
 export type MessageDeliveryStatus =
   | 'pending'
   | 'sending'
+  | 'sent'
   | 'delivered'
   | 'failed'
   | 'queued_offline';
@@ -40,6 +45,17 @@ export interface Message {
   transport: TransportType;
   status: MessageDeliveryStatus;
   isMe: boolean;
+  type?:
+    | 'CHAT_MSG'
+    | 'CONNECTION_REQUEST'
+    | 'CONNECTION_ACCEPTED'
+    | 'CONNECTION_DECLINED'
+    | 'CONNECTION_DISCONNECTED'
+    | 'MSG_ACK';
+  targetPeerId?: string;
+  ackMessageId?: string;
+  verificationCode?: string;
+  senderDevice?: string;
   isVoice?: boolean;
   audioDurationSeconds?: number;
   isPlusRelay?: boolean;

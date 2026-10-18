@@ -99,7 +99,7 @@ export default function SettingsScreen() {
             <Badge label="ZERO DATA" variant="cyan" size="sm" />
           </View>
           <Text style={[styles.optionTitle, { color: theme.text }]}>
-            Share Orbitor APK over Radio
+            Share Radii APK over Radio
           </Text>
           <Text style={[styles.optionDesc, { color: theme.textSecondary }]}>
             Beam the standalone APK to nearby friends with no internet access. Receiver enables 'install unknown apps' once.
@@ -206,7 +206,7 @@ export default function SettingsScreen() {
           ]}>
           <View style={styles.cardHeaderRow}>
             <Text style={[styles.cardTitle, { color: theme.plus }]}>
-              ORBITOR PLUS // COMING SOON
+              RADII PLUS // COMING SOON
             </Text>
             <Badge label="₹99 / MO" variant="purple" size="sm" />
           </View>
@@ -227,7 +227,7 @@ export default function SettingsScreen() {
             🔒 ZERO INTERNET LEAK GUARANTEE
           </Text>
           <Text style={[styles.privacyDesc, { color: theme.textTertiary }]}>
-            Orbitor operates strictly on local device antennas (Bluetooth & Wi-Fi Direct). No servers receive your contacts, messages, or location coordinates.
+            Radii operates strictly on local device antennas (Bluetooth & Wi-Fi Direct). No servers receive your contacts, messages, or location coordinates.
           </Text>
         </View>
       </ScrollView>

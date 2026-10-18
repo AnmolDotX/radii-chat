@@ -31,7 +31,7 @@ export const Palette = {
     danger: '#F44336',
     dangerMuted: 'rgba(244, 67, 54, 0.16)',
 
-    // Orbitor Plus
+    // Radii Plus
     plus: '#9C27B0',
     plusMuted: 'rgba(156, 39, 176, 0.16)',
     plusGold: '#FFB300',
@@ -66,7 +66,7 @@ export const Palette = {
     danger: '#D93025',
     dangerMuted: 'rgba(217, 48, 37, 0.14)',
 
-    // Orbitor Plus
+    // Radii Plus
     plus: '#8E24AA',
     plusMuted: 'rgba(142, 36, 170, 0.12)',
     plusGold: '#F9AB00',

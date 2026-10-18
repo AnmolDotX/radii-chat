@@ -1,6 +1,6 @@
 import { ITransport, TransportCapabilities } from './types';
-import { MockTransport } from './MockTransport';
-import { Peer, Message, TransportType, NetworkMode } from '../core/types';
+import { NativeRadioTransport } from './NativeRadioTransport';
+import { NetworkMode } from '../core/types';
 
 export class TransportManager {
   private activeTransport: ITransport;
@@ -8,7 +8,7 @@ export class TransportManager {
   private autoUpgradeRadios = true;
 
   constructor() {
-    this.activeTransport = new MockTransport();
+    this.activeTransport = new NativeRadioTransport();
   }
 
   public getTransport(): ITransport {
@@ -17,6 +17,9 @@ export class TransportManager {
 
   public setNetworkMode(mode: NetworkMode): void {
     this.mode = mode;
+    if (this.activeTransport && 'setMode' in this.activeTransport) {
+      (this.activeTransport as any).setMode(mode);
+    }
   }
 
   public getNetworkMode(): NetworkMode {
@@ -35,7 +38,15 @@ export class TransportManager {
     return this.activeTransport.capabilities();
   }
 
+  public async enableHardwareRadios(): Promise<any> {
+    if (this.activeTransport && 'enableHardwareRadios' in this.activeTransport) {
+      return (this.activeTransport as any).enableHardwareRadios();
+    }
+    return { bluetoothEnabled: true, locationEnabled: true };
+  }
+
   public async start(): Promise<void> {
+    await this.enableHardwareRadios();
     await this.activeTransport.startDiscovery();
     await this.activeTransport.startAdvertising();
   }
@@ -47,6 +58,13 @@ export class TransportManager {
 
   public async send(peerId: string, text: string): Promise<boolean> {
     return this.activeTransport.sendMessage(peerId, text);
+  }
+
+  public async sendPacket(peerId: string, packet: any): Promise<boolean> {
+    if ('sendPacket' in this.activeTransport) {
+      return (this.activeTransport as any).sendPacket(peerId, packet);
+    }
+    return this.activeTransport.sendMessage(peerId, JSON.stringify(packet));
   }
 
   public async sendVoice(peerId: string, durationSec: number): Promise<boolean> {

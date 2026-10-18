@@ -6,4 +6,6 @@ export function useOrbitorTheme(): ThemeColors {
   return scheme === 'light' ? Palette.light : Palette.dark;
 }
 
+export const useRadiiTheme = useOrbitorTheme;
+
 export * from './tokens';

@@ -6,8 +6,6 @@ import { NetworkMode } from '../../core/types';
 interface RadioPillBarProps {
   networkMode: NetworkMode;
   onSelectMode: (mode: NetworkMode) => void;
-  autoUpgrade: boolean;
-  onToggleAutoUpgrade: (enabled: boolean) => void;
 }
 
 export const RadioPillBar: React.FC<RadioPillBarProps> = ({
@@ -15,35 +13,41 @@ export const RadioPillBar: React.FC<RadioPillBarProps> = ({
   onSelectMode,
 }) => {
   const theme = useOrbitorTheme();
+  const isOffline = networkMode === 'offline';
 
   const toggleMode = () => {
-    onSelectMode(networkMode === 'offline' ? 'lan' : 'offline');
+    onSelectMode(isOffline ? 'online' : 'offline');
   };
-
-  const isOffline = networkMode === 'offline';
 
   return (
     <Pressable
       onPress={toggleMode}
+      accessibilityRole="button"
+      accessibilityLabel={`Current mode: ${isOffline ? 'Offline Mesh' : 'Online Proximity'}. Tap to switch.`}
       style={({ pressed }) => [
         styles.pillContainer,
         {
           backgroundColor: theme.surface,
           borderColor: theme.border,
-          opacity: pressed ? 0.75 : 1,
+          opacity: pressed ? 0.8 : 1,
         },
       ]}>
-      <View style={[styles.activeDot, { backgroundColor: theme.success }]} />
+      <View
+        style={[
+          styles.activeDot,
+          { backgroundColor: isOffline ? theme.success : theme.accentBlue },
+        ]}
+      />
       <Text style={[styles.statusText, { color: theme.text }]}>
-        {isOffline ? 'Offline Radio Mesh' : 'Campus LAN Mode'}
+        {isOffline ? 'Offline Connection' : 'Online Connection'}
       </Text>
       <Text style={[styles.divider, { color: theme.border }]}>·</Text>
-      <Text style={[styles.subText, { color: theme.textTertiary }]}>
-        {isOffline ? 'BLE & Nearby' : 'Hostel Wi-Fi'}
+      <Text style={[styles.subText, { color: theme.textSecondary }]}>
+        {isOffline ? 'Bluetooth & Nearby' : 'Location Proximity'}
       </Text>
       <View style={[styles.switchIndicator, { backgroundColor: theme.surfaceElevated }]}>
-        <Text style={[styles.switchText, { color: theme.accentCyan }]}>
-          {isOffline ? 'LAN ↗' : 'Radio ↗'}
+        <Text style={[styles.switchText, { color: isOffline ? theme.accentCyan : theme.accentBlue }]}>
+          {isOffline ? 'Go Online ↗' : 'Go Offline ↗'}
         </Text>
       </View>
     </Pressable>
@@ -63,8 +67,8 @@ const styles = StyleSheet.create({
     marginVertical: Spacing.xs,
   },
   activeDot: {
-    width: 6,
-    height: 6,
+    width: 7,
+    height: 7,
     borderRadius: Radius.full,
   },
   statusText: {

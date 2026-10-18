@@ -8,11 +8,13 @@ import {
   Pressable,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useOrbitorTheme, Typography, Radius, Spacing, Layout } from '@/theme';
 import { useOrbitor } from '@/context/OrbitorContext';
+import { normalizePeerId } from '@/transport/NativeRadioTransport';
 import { MessageBubble } from '@/components/chat/MessageBubble';
 import { PTTVoiceButton } from '@/components/chat/PTTVoiceButton';
 import { PeerAvatar } from '@/components/common/PeerAvatar';
@@ -25,18 +27,21 @@ export default function ChatRoomScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ id: string; name?: string }>();
-  const peerId = params.id || 'peer_aarav';
+  const rawId = params.id || 'peer_aarav';
+  const peerId = normalizePeerId(rawId);
 
-  const { peers, messages, sendMessage, sendVoiceNote, outboxItems } = useOrbitor();
+  const { peers, messages, sendMessage, sendVoiceNote, outboxItems, unpairPeer } = useOrbitor();
   const [inputText, setInputText] = useState('');
   const [plusVisible, setPlusVisible] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
-  const activePeer = peers.find((p) => p.id === peerId);
+  const activePeer = peers.find(
+    (p) => p.id === peerId || p.id.toLowerCase().endsWith(rawId.slice(-6).toLowerCase())
+  );
   const peerName = params.name || activePeer?.name || 'Nearby Peer';
-  const peerMessages = messages[peerId] || [];
+  const peerMessages = messages[peerId] || messages[rawId] || [];
 
-  const peerOutbox = outboxItems.filter((i) => i.recipientId === peerId);
+  const peerOutbox = outboxItems.filter((i) => i.recipientId === peerId || i.recipientId === rawId);
 
   useEffect(() => {
     setTimeout(() => {
@@ -53,6 +58,24 @@ export default function ChatRoomScreen() {
 
   const handleSendVoice = async (durationSec: number) => {
     await sendVoiceNote(peerId, durationSec);
+  };
+
+  const handleDisconnect = () => {
+    Alert.alert(
+      'Disconnect Companion',
+      `Are you sure you want to disconnect from ${peerName}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect',
+          style: 'destructive',
+          onPress: () => {
+            unpairPeer(peerId);
+            router.back();
+          },
+        },
+      ]
+    );
   };
 
   return (
@@ -93,22 +116,21 @@ export default function ChatRoomScreen() {
                 size="sm"
               />
               <Text style={[styles.headerSignal, { color: theme.textTertiary }]}>
-                {activePeer ? `${activePeer.rssi} dBm · Direct Link` : 'Mesh Relay'}
+                {activePeer ? `${activePeer.rssi} dBm · Direct Link` : 'Direct Radio Link'}
               </Text>
             </View>
           </View>
 
           <Pressable
-            onPress={() => setPlusVisible(true)}
+            onPress={handleDisconnect}
             style={({ pressed }) => [
-              styles.plusInfoButton,
+              styles.disconnectHeaderButton,
               {
-                backgroundColor: theme.plusMuted,
-                borderColor: theme.plus,
+                borderColor: theme.danger,
                 opacity: pressed ? 0.75 : 1,
               },
             ]}>
-            <Text style={[styles.plusInfoText, { color: theme.plus }]}>Plus</Text>
+            <Text style={[styles.disconnectHeaderText, { color: theme.danger }]}>Disconnect</Text>
           </Pressable>
         </View>
 
@@ -268,6 +290,17 @@ const styles = StyleSheet.create({
   headerSignal: {
     fontSize: Typography.sizes.xs - 2,
     fontFamily: Typography.monoFamily,
+  },
+  disconnectHeaderButton: {
+    paddingVertical: 4,
+    paddingHorizontal: Spacing.sm + 2,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+  },
+  disconnectHeaderText: {
+    fontSize: Typography.sizes.xs - 1,
+    fontWeight: Typography.weights.bold,
+    fontFamily: Typography.fontFamily,
   },
   plusInfoButton: {
     paddingVertical: 3,

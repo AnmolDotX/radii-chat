@@ -55,7 +55,7 @@ export default function FlingScreen() {
           ]}>
           <View style={styles.apkTextWrap}>
             <View style={styles.apkTitleRow}>
-              <Text style={[styles.apkTitle, { color: theme.text }]}>Share Orbitor APK</Text>
+              <Text style={[styles.apkTitle, { color: theme.text }]}>Share Radii APK</Text>
               <Badge label="OFFLINE BEAM" variant="cyan" size="sm" />
             </View>
             <Text style={[styles.apkDesc, { color: theme.textSecondary }]}>
@@ -111,7 +111,7 @@ export default function FlingScreen() {
               No peer drop targets nearby
             </Text>
             <Text style={[styles.emptySubtitle, { color: theme.textSecondary }]}>
-              Open Orbitor on another device in range to fling documents, photos, or videos directly.
+              Open Radii on another device in range to fling documents, photos, or videos directly.
             </Text>
           </View>
         ) : (

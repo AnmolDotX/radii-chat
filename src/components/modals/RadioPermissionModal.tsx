@@ -1,38 +1,68 @@
-import React from 'react';
-import { View, Text, StyleSheet, Modal, Pressable } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, Modal, Pressable, Platform, PermissionsAndroid, ActivityIndicator, Linking } from 'react-native';
 import { useOrbitorTheme, Typography, Radius, Spacing } from '../../theme';
 import { Badge } from '../common/Badge';
+
+import { requestRadioAndNearbyPermissions, checkRadioPermissions } from '../../utils/permissions';
 
 interface RadioPermissionModalProps {
   visible: boolean;
   onClose: () => void;
   onConfirm: () => void;
+  visibilityMode?: 'everyone' | 'contacts' | 'hidden';
 }
 
 export const RadioPermissionModal: React.FC<RadioPermissionModalProps> = ({
   visible,
   onClose,
   onConfirm,
+  visibilityMode = 'everyone',
 }) => {
   const theme = useOrbitorTheme();
+  const [isRequesting, setIsRequesting] = useState(false);
+  const [isAlreadyGranted, setIsAlreadyGranted] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      checkRadioPermissions().then((granted) => {
+        setIsAlreadyGranted(granted);
+      });
+    }
+  }, [visible]);
 
   const permissions = [
     {
-      title: 'Bluetooth',
-      desc: 'Low-energy beacon advertising & discovery of nearby peers',
-      tag: 'CONTROL',
+      title: 'Bluetooth & BLE Discovery',
+      desc: 'Required by Android to advertise beacon signals and locate nearby companions without cell towers.',
+      tag: 'HARDWARE · ANTENNA',
     },
     {
-      title: 'Wi-Fi & Wi-Fi Direct',
-      desc: 'High-speed device-to-device direct payload transmission without internet',
-      tag: 'TRANSPORT',
+      title: 'Nearby Wi-Fi Direct',
+      desc: 'Connects directly antenna-to-antenna for instant messages and file transfers without internet.',
+      tag: 'TRANSPORT · DIRECT',
     },
     {
-      title: 'Nearby Devices & Location',
-      desc: 'Android OS requirement for discovering local hardware radios',
-      tag: 'SYSTEM',
+      title: 'Nearby Radar Visibility',
+      desc: `Your device will broadcast as "${visibilityMode === 'everyone' ? 'Everyone Nearby' : 'Contacts Only'}" to allow nearby peers to discover you.`,
+      tag: 'RADAR · VISIBILITY',
     },
   ];
+
+  const handleRequestAndConnect = () => {
+    setIsRequesting(true);
+    // Dismiss the modal first so Android Activity gets full focus for the system permission prompt
+    onClose();
+    setTimeout(async () => {
+      try {
+        await requestRadioAndNearbyPermissions();
+      } catch (err) {
+        console.warn('Permission error:', err);
+      } finally {
+        setIsRequesting(false);
+        onConfirm();
+      }
+    }, 150);
+  };
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -46,11 +76,20 @@ export const RadioPermissionModal: React.FC<RadioPermissionModalProps> = ({
             },
           ]}>
           <View style={styles.header}>
+            <View style={styles.headerTopBadge}>
+              <Badge
+                label={isAlreadyGranted ? 'ALL RADIOS ACTIVE' : 'PERMISSIONS REQUIRED'}
+                variant={isAlreadyGranted ? 'green' : 'cyan'}
+                size="sm"
+              />
+            </View>
             <Text style={[styles.title, { color: theme.text }]}>
-              Enable Offline Radios
+              {isAlreadyGranted ? 'Radios & Hardware Active' : 'Enable Offline Radios & Connect'}
             </Text>
             <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-              To connect directly phone-to-phone without internet, Orbitor uses your device antennas.
+              {isAlreadyGranted
+                ? 'Your device Bluetooth, Nearby, and Location hardware radios are authorized and actively scanning.'
+                : "Radii uses your phone's hardware antennas directly. Zero internet, cell reception, or cloud tracking required."}
             </Text>
           </View>
 
@@ -77,32 +116,35 @@ export const RadioPermissionModal: React.FC<RadioPermissionModalProps> = ({
           <View style={styles.actionRow}>
             <Pressable
               onPress={onClose}
+              disabled={isRequesting}
               style={({ pressed }) => [
                 styles.cancelButton,
                 {
                   backgroundColor: theme.surfaceElevated,
                   borderColor: theme.border,
-                  opacity: pressed ? 0.75 : 1,
+                  opacity: pressed || isRequesting ? 0.75 : 1,
                 },
               ]}>
               <Text style={[styles.cancelText, { color: theme.textSecondary }]}>Cancel</Text>
             </Pressable>
 
             <Pressable
-              onPress={() => {
-                onConfirm();
-                onClose();
-              }}
+              onPress={handleRequestAndConnect}
+              disabled={isRequesting}
               style={({ pressed }) => [
                 styles.confirmButton,
                 {
                   backgroundColor: theme.text,
-                  opacity: pressed ? 0.85 : 1,
+                  opacity: pressed || isRequesting ? 0.85 : 1,
                 },
               ]}>
-              <Text style={[styles.confirmText, { color: theme.background }]}>
-                Enable & Connect
-              </Text>
+              {isRequesting ? (
+                <ActivityIndicator size="small" color={theme.background} />
+              ) : (
+                <Text style={[styles.confirmText, { color: theme.background }]}>
+                  Grant & Connect
+                </Text>
+              )}
             </Pressable>
           </View>
         </View>
@@ -129,6 +171,10 @@ const styles = StyleSheet.create({
   },
   header: {
     gap: 4,
+  },
+  headerTopBadge: {
+    alignSelf: 'flex-start',
+    marginBottom: 4,
   },
   title: {
     fontSize: Typography.sizes.lg,

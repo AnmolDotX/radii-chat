@@ -1,9 +1,11 @@
 import React from 'react';
-import { View, Text, StyleSheet, Modal, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Modal, Pressable, Alert } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useOrbitorTheme, Typography, Radius, Spacing } from '../../theme';
 import { Peer } from '../../core/types';
 import { PeerAvatar } from '../common/PeerAvatar';
 import { Badge } from '../common/Badge';
+import { useOrbitor } from '../../context/OrbitorContext';
 
 interface PeerDetailSheetProps {
   peer: Peer | null;
@@ -19,8 +21,36 @@ export const PeerDetailSheet: React.FC<PeerDetailSheetProps> = ({
   onConnect,
 }) => {
   const theme = useOrbitorTheme();
+  const router = useRouter();
+  const { unpairPeer } = useOrbitor();
 
   if (!peer) return null;
+
+  const handleDisconnect = () => {
+    Alert.alert(
+      'Disconnect Companion',
+      `Are you sure you want to unpair and disconnect from ${peer.name}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect',
+          style: 'destructive',
+          onPress: () => {
+            unpairPeer(peer.id);
+            onClose();
+          },
+        },
+      ]
+    );
+  };
+
+  const handleChat = () => {
+    onClose();
+    router.push({
+      pathname: '/chat/[id]',
+      params: { id: peer.id, name: peer.name },
+    });
+  };
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -74,36 +104,66 @@ export const PeerDetailSheet: React.FC<PeerDetailSheetProps> = ({
           </View>
 
           <View style={styles.actionsRow}>
-            <Pressable
-              onPress={onClose}
-              style={({ pressed }) => [
-                styles.dismissButton,
-                {
-                  backgroundColor: theme.surfaceElevated,
-                  borderColor: theme.border,
-                  opacity: pressed ? 0.75 : 1,
-                },
-              ]}>
-              <Text style={[styles.dismissText, { color: theme.textSecondary }]}>Close</Text>
-            </Pressable>
+            {peer.isPaired ? (
+              <>
+                <Pressable
+                  onPress={handleDisconnect}
+                  style={({ pressed }) => [
+                    styles.disconnectButton,
+                    {
+                      borderColor: theme.danger,
+                      opacity: pressed ? 0.75 : 1,
+                    },
+                  ]}>
+                  <Text style={[styles.disconnectText, { color: theme.danger }]}>Disconnect</Text>
+                </Pressable>
 
-            {!peer.isPaired && (
-              <Pressable
-                onPress={() => {
-                  onClose();
-                  onConnect(peer);
-                }}
-                style={({ pressed }) => [
-                  styles.connectButton,
-                  {
-                    backgroundColor: theme.text,
-                    opacity: pressed ? 0.85 : 1,
-                  },
-                ]}>
-                <Text style={[styles.connectText, { color: theme.background }]}>
-                  Request Connect
-                </Text>
-              </Pressable>
+                <Pressable
+                  onPress={handleChat}
+                  style={({ pressed }) => [
+                    styles.connectButton,
+                    {
+                      backgroundColor: theme.text,
+                      opacity: pressed ? 0.85 : 1,
+                    },
+                  ]}>
+                  <Text style={[styles.connectText, { color: theme.background }]}>
+                    Open Chat
+                  </Text>
+                </Pressable>
+              </>
+            ) : (
+              <>
+                <Pressable
+                  onPress={onClose}
+                  style={({ pressed }) => [
+                    styles.dismissButton,
+                    {
+                      backgroundColor: theme.surfaceElevated,
+                      borderColor: theme.border,
+                      opacity: pressed ? 0.75 : 1,
+                    },
+                  ]}>
+                  <Text style={[styles.dismissText, { color: theme.textSecondary }]}>Close</Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    onClose();
+                    onConnect(peer);
+                  }}
+                  style={({ pressed }) => [
+                    styles.connectButton,
+                    {
+                      backgroundColor: theme.text,
+                      opacity: pressed ? 0.85 : 1,
+                    },
+                  ]}>
+                  <Text style={[styles.connectText, { color: theme.background }]}>
+                    Request Connect
+                  </Text>
+                </Pressable>
+              </>
             )}
           </View>
         </View>
@@ -183,6 +243,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   connectText: {
+    fontSize: Typography.sizes.sm,
+    fontWeight: Typography.weights.bold,
+    fontFamily: Typography.fontFamily,
+  },
+  disconnectButton: {
+    flex: 1,
+    paddingVertical: Spacing.sm + 4,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  disconnectText: {
     fontSize: Typography.sizes.sm,
     fontWeight: Typography.weights.bold,
     fontFamily: Typography.fontFamily,

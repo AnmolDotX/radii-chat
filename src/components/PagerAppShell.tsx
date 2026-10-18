@@ -47,7 +47,7 @@ export default function PagerAppShell() {
           <RadarScreen />
         </View>
         <View key="1" style={styles.page}>
-          <ChatsScreen />
+          <ChatsScreen onNavigateToRadar={() => handleSelectTab(0)} />
         </View>
         <View key="2" style={styles.page}>
           <FlingScreen />

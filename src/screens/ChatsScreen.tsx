@@ -13,12 +13,13 @@ import { useOrbitor } from '@/context/OrbitorContext';
 import { PeerAvatar } from '@/components/common/PeerAvatar';
 import { Badge } from '@/components/common/Badge';
 import { OutboxNotice } from '@/components/common/OutboxNotice';
-import { QRMeshModal } from '@/components/modals/QRMeshModal';
+import { RoomsModal } from '@/components/modals/RoomsModal';
 
-import { GestureDetector } from 'react-native-gesture-handler';
-import { useSwipeNavigation } from '@/hooks/useSwipeNavigation';
+interface ChatsScreenProps {
+  onNavigateToRadar?: () => void;
+}
 
-export default function ChatsScreen() {
+export default function ChatsScreen({ onNavigateToRadar }: ChatsScreenProps) {
   const theme = useOrbitorTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -29,9 +30,10 @@ export default function ChatsScreen() {
     eventRooms,
     outboxItems,
     joinEventRoom,
+    createEventRoom,
   } = useOrbitor();
 
-  const [qrVisible, setQrVisible] = useState(false);
+  const [roomsModalVisible, setRoomsModalVisible] = useState(false);
 
   const handleOpenConversation = (id: string, name: string) => {
     router.push({
@@ -40,7 +42,21 @@ export default function ChatsScreen() {
     });
   };
 
-  const hasAnyChat = eventRooms.length > 0 || peers.length > 0;
+  const handleCreateRoom = (name: string, description?: string, customCode?: string) => {
+    const room = createEventRoom(name, description, customCode);
+    handleOpenConversation(room.id, room.name);
+  };
+
+  const handleJoinRoom = (code: string) => {
+    joinEventRoom(code);
+    const existing = eventRooms.find((r) => r.code === code.trim().toUpperCase());
+    if (existing) {
+      handleOpenConversation(existing.id, existing.name);
+    }
+  };
+
+  const pairedPeers = peers.filter((p) => p.isPaired);
+  const hasAnyChat = eventRooms.length > 0 || pairedPeers.length > 0;
 
   return (
     <SafeAreaView
@@ -54,10 +70,10 @@ export default function ChatsScreen() {
         showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.headerRow}>
-          <Text style={[styles.title, { color: theme.text }]}>Chats</Text>
+          <Text style={[styles.title, { color: theme.text }]}>Mesh Chats</Text>
 
           <Pressable
-            onPress={() => setQrVisible(true)}
+            onPress={() => setRoomsModalVisible(true)}
             style={({ pressed }) => [
               styles.qrButton,
               {
@@ -66,7 +82,7 @@ export default function ChatsScreen() {
                 opacity: pressed ? 0.75 : 1,
               },
             ]}>
-            <Text style={[styles.qrButtonText, { color: theme.text }]}>+ Join Room</Text>
+            <Text style={[styles.qrButtonText, { color: theme.text }]}>+ Rooms</Text>
           </Pressable>
         </View>
 
@@ -76,25 +92,42 @@ export default function ChatsScreen() {
         {!hasAnyChat ? (
           <View style={styles.emptyContainer}>
             <Text style={[styles.emptyTitle, { color: theme.text }]}>
-              No active conversations yet
+              No connected peers or rooms
             </Text>
             <Text style={[styles.emptySubtitle, { color: theme.textSecondary }]}>
-              Discovered peers on the Radar or campus event rooms will appear here. No internet required.
+              Connect with nearby users on the Radar screen or create an offline mesh room to start chatting.
             </Text>
 
-            <Pressable
-              onPress={() => setQrVisible(true)}
-              style={({ pressed }) => [
-                styles.emptyActionButton,
-                {
-                  backgroundColor: theme.text,
-                  opacity: pressed ? 0.85 : 1,
-                },
-              ]}>
-              <Text style={[styles.emptyActionText, { color: theme.background }]}>
-                Join Event Room via Code
-              </Text>
-            </Pressable>
+            <View style={styles.emptyButtonRow}>
+              <Pressable
+                onPress={onNavigateToRadar}
+                style={({ pressed }) => [
+                  styles.emptyActionButton,
+                  {
+                    backgroundColor: theme.text,
+                    opacity: pressed ? 0.85 : 1,
+                  },
+                ]}>
+                <Text style={[styles.emptyActionText, { color: theme.background }]}>
+                  ⚡ Connect to User on Radar
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => setRoomsModalVisible(true)}
+                style={({ pressed }) => [
+                  styles.secondaryActionButton,
+                  {
+                    backgroundColor: theme.surface,
+                    borderColor: theme.border,
+                    opacity: pressed ? 0.75 : 1,
+                  },
+                ]}>
+                <Text style={[styles.secondaryActionText, { color: theme.text }]}>
+                  + Create or Join Room
+                </Text>
+              </Pressable>
+            </View>
           </View>
         ) : (
           <>
@@ -187,12 +220,12 @@ export default function ChatsScreen() {
         )}
       </ScrollView>
 
-      {/* QR Code & Room Code Modal */}
-      <QRMeshModal
-        visible={qrVisible}
-        onClose={() => setQrVisible(false)}
-        myProfileName={myProfile.displayName}
-        onJoinCode={joinEventRoom}
+      {/* Create & Join Mesh Rooms Modal */}
+      <RoomsModal
+        visible={roomsModalVisible}
+        onClose={() => setRoomsModalVisible(false)}
+        onCreateRoom={handleCreateRoom}
+        onJoinRoom={handleJoinRoom}
       />
     </SafeAreaView>
   );
@@ -252,13 +285,33 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     maxWidth: 280,
   },
-  emptyActionButton: {
-    paddingVertical: Spacing.sm + 2,
-    paddingHorizontal: Spacing.base,
-    borderRadius: Radius.full,
+  emptyButtonRow: {
+    gap: Spacing.sm,
+    width: '100%',
+    maxWidth: 280,
     marginTop: Spacing.sm,
   },
+  emptyActionButton: {
+    paddingVertical: Spacing.sm + 4,
+    paddingHorizontal: Spacing.base,
+    borderRadius: Radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   emptyActionText: {
+    fontSize: Typography.sizes.xs + 1,
+    fontWeight: Typography.weights.semibold,
+    fontFamily: Typography.fontFamily,
+  },
+  secondaryActionButton: {
+    paddingVertical: Spacing.sm + 4,
+    paddingHorizontal: Spacing.base,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryActionText: {
     fontSize: Typography.sizes.xs + 1,
     fontWeight: Typography.weights.semibold,
     fontFamily: Typography.fontFamily,

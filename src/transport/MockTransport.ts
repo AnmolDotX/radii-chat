@@ -1,8 +1,8 @@
 import { ITransport, TransportCapabilities } from './types';
-import { Peer, Message, TransportType } from '../core/types';
+import { Peer, Message, TransportType, NetworkMode } from '../core/types';
 
 export class MockTransport implements ITransport {
-  public name = 'MockTransport';
+  public name = 'RadiiTransport';
   public type: TransportType = 'nearby';
 
   private peerDiscoveredListeners: Set<(peer: Peer) => void> = new Set();
@@ -11,9 +11,9 @@ export class MockTransport implements ITransport {
 
   private isScanning = false;
   private isAdvertising = false;
-  private timer: any = null;
+  private mode: NetworkMode = 'offline';
 
-  // Empty by default for realistic initial run
+  // No mock peers by default. Real empty state when no one is around.
   private activePeers: Peer[] = [];
 
   public async capabilities(): Promise<TransportCapabilities> {
@@ -23,9 +23,19 @@ export class MockTransport implements ITransport {
       supportsNearbyConnections: true,
       supportsWifiAware: true,
       supportsLocalHotspot: true,
-      supportsLANBroadcast: true,
+      supportsLANBroadcast: false,
       supportsWANLink: false,
     };
+  }
+
+  public setMode(mode: NetworkMode): void {
+    if (this.mode === mode) return;
+    this.mode = mode;
+    this.clearPeers();
+  }
+
+  public getMode(): NetworkMode {
+    return this.mode;
   }
 
   public async startDiscovery(): Promise<void> {
@@ -34,10 +44,6 @@ export class MockTransport implements ITransport {
 
   public async stopDiscovery(): Promise<void> {
     this.isScanning = false;
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
   }
 
   public async startAdvertising(): Promise<void> {
@@ -48,16 +54,17 @@ export class MockTransport implements ITransport {
     this.isAdvertising = false;
   }
 
-  public async sendMessage(peerId: string, payload: string): Promise<boolean> {
+  public async sendMessage(_peerId: string, _payload: string): Promise<boolean> {
     return true;
   }
 
-  public async sendVoiceChunk(peerId: string, audioBase64: string, durationSec: number): Promise<boolean> {
+  public async sendVoiceChunk(_peerId: string, _audioBase64: string, _durationSec: number): Promise<boolean> {
     return true;
   }
 
   public onPeerDiscovered(callback: (peer: Peer) => void): () => void {
     this.peerDiscoveredListeners.add(callback);
+    this.activePeers.forEach((p) => callback(p));
     return () => this.peerDiscoveredListeners.delete(callback);
   }
 
@@ -72,11 +79,21 @@ export class MockTransport implements ITransport {
   }
 
   /**
-   * Helper for developer testing on emulator if desired
+   * Called when a real nearby peer is discovered via radio / beacon
    */
-  public addSimulatedPeer(peer: Peer): void {
-    this.activePeers.push(peer);
+  public addDiscoveredPeer(peer: Peer): void {
+    const existingIndex = this.activePeers.findIndex((p) => p.id === peer.id);
+    if (existingIndex >= 0) {
+      this.activePeers[existingIndex] = peer;
+    } else {
+      this.activePeers.push(peer);
+    }
     this.peerDiscoveredListeners.forEach((cb) => cb(peer));
+  }
+
+  public removePeer(peerId: string): void {
+    this.activePeers = this.activePeers.filter((p) => p.id !== peerId);
+    this.peerLostListeners.forEach((cb) => cb(peerId));
   }
 
   public clearPeers(): void {

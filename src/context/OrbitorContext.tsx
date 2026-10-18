@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import {
   Peer,
   Message,
@@ -12,8 +12,10 @@ import {
 import { getLocalProfile, loadPersistedProfile, updateProfile } from '../core/identity';
 import { outbox } from '../core/outbox';
 import { transportManager } from '../transport/TransportManager';
+import { normalizePeerId } from '../transport/NativeRadioTransport';
 import { entitlements, EntitlementState } from '../entitlements';
 import { IncomingConnectionRequest } from '../components/modals/ConnectionRequestModal';
+import { checkRadioPermissions } from '../utils/permissions';
 
 interface OrbitorContextValue {
   myProfile: UserProfile;
@@ -27,6 +29,7 @@ interface OrbitorContextValue {
   eventRooms: EventRoom[];
   fileTransfers: FileTransfer[];
   isScanning: boolean;
+  permissionsGranted: boolean;
 
   // Actions
   setNetworkMode: (mode: NetworkMode) => void;
@@ -37,15 +40,22 @@ interface OrbitorContextValue {
   dismissSOS: () => void;
   startFileFling: (peerId: string, fileName: string, sizeBytes: number) => void;
   joinEventRoom: (code: string) => boolean;
+  createEventRoom: (name: string, description?: string, customCode?: string) => EventRoom;
   startPlusTrial: () => void;
   subscribePlus: () => void;
   canUseFeature: (feature: Parameters<typeof entitlements.can>[0]) => boolean;
   updateUserProfile: (updates: Partial<UserProfile>) => void;
   pairPeer: (peerId: string) => void;
+  unpairPeer: (peerId: string) => void;
   incomingRequest: IncomingConnectionRequest | null;
+  connectionStateMap: Record<string, 'idle' | 'waiting' | 'accepted' | 'declined'>;
+  verificationCodeMap: Record<string, string>;
   acceptConnection: (req: IncomingConnectionRequest) => void;
   declineConnection: (req: IncomingConnectionRequest) => void;
   requestConnection: (peer: Peer) => void;
+  cancelConnectionRequest: (peerId: string) => void;
+  rescan: () => void;
+  setPermissionsGranted: (granted: boolean) => void;
 }
 
 const OrbitorContext = createContext<OrbitorContextValue | null>(null);
@@ -64,58 +74,261 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [eventRooms, setEventRooms] = useState<EventRoom[]>(INITIAL_ROOMS);
   const [fileTransfers, setFileTransfers] = useState<FileTransfer[]>([]);
   const [isScanning, setIsScanning] = useState<boolean>(true);
+  const [permissionsGranted, setPermissionsGranted] = useState<boolean>(false);
   const [incomingRequest, setIncomingRequest] = useState<IncomingConnectionRequest | null>(null);
+  const [connectionStateMap, setConnectionStateMap] = useState<Record<string, 'idle' | 'waiting' | 'accepted' | 'declined'>>({});
+  const [verificationCodeMap, setVerificationCodeMap] = useState<Record<string, string>>({});
+  const cleanupRef = useRef<(() => void) | null>(null);
+  const scanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const startScanWithTimeout = useCallback((durationMs: number = 18000) => {
+    setIsScanning(true);
+    if (scanTimerRef.current) {
+      clearTimeout(scanTimerRef.current);
+    }
+    scanTimerRef.current = setTimeout(() => {
+      setIsScanning(false);
+    }, durationMs);
+  }, []);
 
   // Initialize transport and subscriptions
   useEffect(() => {
-    loadPersistedProfile().then((persisted) => {
+    let cancelled = false;
+
+    const initTransport = async () => {
+      // CRITICAL: Load profile FIRST so identity is stable before native BLE starts
+      const persisted = await loadPersistedProfile();
+      if (cancelled) return;
       setMyProfile({ ...persisted });
-    });
 
-    const transport = transportManager.getTransport();
-    transportManager.start();
-
-    const unsubPeer = transport.onPeerDiscovered((discovered) => {
-      setPeers((prev) => {
-        const index = prev.findIndex((p) => p.id === discovered.id);
-        if (index >= 0) {
-          const updated = [...prev];
-          updated[index] = discovered;
-          return updated;
+      // Automatically sync OS permission status on start
+      try {
+        const hasPerms = await checkRadioPermissions();
+        if (!cancelled && hasPerms) {
+          setPermissionsGranted(true);
         }
-        return [...prev, discovered];
+      } catch (e) {
+        console.warn('checkRadioPermissions error:', e);
+      }
+
+      const transport = transportManager.getTransport();
+      await transportManager.start();
+      if (!cancelled) {
+        startScanWithTimeout(18000);
+      }
+
+      const unsubPeer = transport.onPeerDiscovered((discovered) => {
+        const profile = getLocalProfile();
+        const myShortId = profile.id.slice(-6).toLowerCase();
+        const shortId = (discovered.shortId || discovered.id.slice(-6)).toLowerCase();
+
+        // Discard self-discovery loopback
+        if (
+          shortId === myShortId ||
+          discovered.id === profile.id ||
+          discovered.id === `peer_${profile.id}` ||
+          discovered.id === `peer_${myShortId}` ||
+          discovered.id.toLowerCase().includes(myShortId)
+        ) {
+          return;
+        }
+
+        const canonicalId = `peer_${shortId}`;
+
+        setPeers((prev) => {
+          const index = prev.findIndex(
+            (p) => p.id === canonicalId || p.id.toLowerCase().endsWith(shortId)
+          );
+
+          if (index >= 0) {
+            const existing = prev[index];
+            const mergedTransports = Array.from(
+              new Set([...existing.availableTransports, ...discovered.availableTransports])
+            );
+            const isNearby = Boolean(discovered.ipAddress || existing.ipAddress);
+
+            const updatedPeer: Peer = {
+              ...existing,
+              ...discovered,
+              id: canonicalId,
+              shortId,
+              name:
+                discovered.name && !discovered.name.startsWith('Radii·') && discovered.name !== 'Radii User'
+                  ? discovered.name
+                  : existing.name || discovered.name || `Radii·${shortId}`,
+              deviceName:
+                discovered.deviceName &&
+                discovered.deviceName !== 'Radii Radio' &&
+                discovered.deviceName !== 'Android Radio'
+                  ? discovered.deviceName
+                  : existing.deviceName || discovered.deviceName || 'Android Radio',
+              isPaired: existing.isPaired || discovered.isPaired,
+              availableTransports: mergedTransports,
+              activeTransport: isNearby ? 'nearby' : 'ble',
+              macAddress: discovered.macAddress || existing.macAddress,
+              ipAddress: discovered.ipAddress || existing.ipAddress,
+              statusMessage: isNearby ? 'Direct Wi-Fi Mesh' : 'Direct BLE Radio Signal',
+            };
+
+            const updated = [...prev];
+            updated[index] = updatedPeer;
+            return updated;
+          }
+
+          return [...prev, { ...discovered, id: canonicalId, shortId }];
+        });
       });
-    });
 
-    const unsubPeerLost = transport.onPeerLost((lostId) => {
-      setPeers((prev) => prev.filter((p) => p.id !== lostId));
-    });
-
-    const unsubMsg = transport.onMessageReceived((incoming) => {
-      setMessages((prev) => {
-        const list = prev[incoming.conversationId] || [];
-        return {
-          ...prev,
-          [incoming.conversationId]: [...list, incoming],
-        };
+      const unsubPeerLost = transport.onPeerLost((lostId) => {
+        const canonicalId = normalizePeerId(lostId);
+        const shortId = lostId.slice(-6).toLowerCase();
+        setPeers((prev) =>
+          prev.filter((p) => p.id !== lostId && p.id !== canonicalId && !p.id.toLowerCase().endsWith(shortId))
+        );
       });
-    });
 
-    const unsubOutbox = outbox.subscribe((items) => {
-      setOutboxItems(items);
-    });
+      const unsubMsg = transport.onMessageReceived((incoming) => {
+        const msgType = incoming.type || 'CHAT_MSG';
+        const senderShortId = incoming.senderId.slice(-6).toLowerCase();
+        const canonicalSenderId = `peer_${senderShortId}`;
 
-    const unsubEntitlements = entitlements.subscribe((state) => {
-      setEntitlementState(state);
-    });
+        // 1. INCOMING CONNECTION REQUEST
+        if (msgType === 'CONNECTION_REQUEST') {
+          const profile = getLocalProfile();
+          const myShortId = profile.id.slice(-6).toLowerCase();
+          const targetShortId = (incoming.targetPeerId || '').slice(-6).toLowerCase();
+
+          if (!targetShortId || targetShortId === myShortId) {
+            setIncomingRequest({
+              id: incoming.id,
+              peerId: canonicalSenderId,
+              peerName: incoming.senderName,
+              peerDevice: incoming.senderDevice || 'Nearby Device',
+              verificationCode: incoming.verificationCode || '4829',
+              transport: incoming.transport === 'nearby' ? 'nearby' : 'ble',
+            });
+          }
+          return;
+        }
+
+        // 2. INCOMING CONNECTION ACCEPTED
+        if (msgType === 'CONNECTION_ACCEPTED') {
+          setConnectionStateMap((prev) => ({
+            ...prev,
+            [incoming.senderId]: 'accepted',
+            [canonicalSenderId]: 'accepted',
+            [`ble_${senderShortId}`]: 'accepted',
+            [`wifi_${incoming.senderId}`]: 'accepted',
+          }));
+
+          setPeers((prev) =>
+            prev.map((p) => {
+              if (p.id === canonicalSenderId || p.id.toLowerCase().endsWith(senderShortId)) {
+                return { ...p, isPaired: true };
+              }
+              return p;
+            })
+          );
+          return;
+        }
+
+        // 3. INCOMING CONNECTION DECLINED
+        if (msgType === 'CONNECTION_DECLINED') {
+          setConnectionStateMap((prev) => ({
+            ...prev,
+            [incoming.senderId]: 'declined',
+            [canonicalSenderId]: 'declined',
+            [`ble_${senderShortId}`]: 'declined',
+          }));
+          return;
+        }
+
+        // 4. INCOMING CONNECTION DISCONNECTED
+        if (msgType === 'CONNECTION_DISCONNECTED') {
+          setPeers((prev) =>
+            prev.map((p) => {
+              if (p.id === canonicalSenderId || p.id.toLowerCase().endsWith(senderShortId)) {
+                return { ...p, isPaired: false };
+              }
+              return p;
+            })
+          );
+          setConnectionStateMap((prev) => ({
+            ...prev,
+            [incoming.senderId]: 'idle',
+            [canonicalSenderId]: 'idle',
+          }));
+          return;
+        }
+
+        // 5. MSG_ACK (Delivery Confirmation from recipient)
+        if (msgType === 'MSG_ACK' && incoming.ackMessageId) {
+          setMessages((prev) => {
+            const list = prev[canonicalSenderId] || [];
+            return {
+              ...prev,
+              [canonicalSenderId]: list.map((m) =>
+                m.id === incoming.ackMessageId ? { ...m, status: 'delivered' } : m
+              ),
+            };
+          });
+          return;
+        }
+
+        // 6. REGULAR CHAT MESSAGE
+        const convoKey = canonicalSenderId;
+        setMessages((prev) => {
+          const list = prev[convoKey] || [];
+          if (list.some((m) => m.id === incoming.id)) return prev;
+          return {
+            ...prev,
+            [convoKey]: [
+              ...list,
+              { ...incoming, conversationId: convoKey, senderId: canonicalSenderId },
+            ],
+          };
+        });
+
+        // Automatically transmit MSG_ACK back to sender so sender shows double ticks (✓✓)
+        const profile = getLocalProfile();
+        const myShortId = profile.id.slice(-6).toLowerCase();
+        transportManager.sendPacket(canonicalSenderId, {
+          type: 'MSG_ACK',
+          id: `ack_${Date.now()}`,
+          ackMessageId: incoming.id,
+          senderId: `peer_${myShortId}`,
+          senderShortId: myShortId,
+          targetPeerId: canonicalSenderId,
+          targetShortId: senderShortId,
+          timestamp: Date.now(),
+        });
+      });
+
+      const unsubOutbox = outbox.subscribe((items) => {
+        setOutboxItems(items);
+      });
+
+      const unsubEntitlements = entitlements.subscribe((state) => {
+        setEntitlementState(state);
+      });
+
+      // Store cleanup refs
+      cleanupRef.current = () => {
+        if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+        unsubPeer();
+        unsubPeerLost();
+        unsubMsg();
+        unsubOutbox();
+        unsubEntitlements();
+        transportManager.stop();
+      };
+    };
+
+    initTransport();
 
     return () => {
-      unsubPeer();
-      unsubPeerLost();
-      unsubMsg();
-      unsubOutbox();
-      unsubEntitlements();
-      transportManager.stop();
+      cancelled = true;
+      cleanupRef.current?.();
     };
   }, []);
 
@@ -131,40 +344,57 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const sendMessage = useCallback(
     async (peerId: string, text: string): Promise<boolean> => {
-      const peer = peers.find((p) => p.id === peerId);
+      const canonicalId = normalizePeerId(peerId);
+      const peer = peers.find(
+        (p) => p.id === canonicalId || p.id.toLowerCase().endsWith(peerId.slice(-6).toLowerCase())
+      );
       const isPeerInRange = peer && peer.distanceBracket !== 'out_of_range';
+
+      const myShortId = myProfile.id.slice(-6).toLowerCase();
+      const targetShortId = peerId.slice(-6).toLowerCase();
 
       const newMsg: Message = {
         id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        conversationId: peerId,
-        senderId: myProfile.id,
-        senderName: myProfile.displayName,
+        conversationId: canonicalId,
+        senderId: `peer_${myShortId}`,
+        senderName: myProfile.displayName || myProfile.deviceName || 'Radii User',
         text,
         timestamp: Date.now(),
         transport: peer?.activeTransport || 'nearby',
-        status: isPeerInRange ? 'delivered' : 'queued_offline',
+        status: isPeerInRange ? 'sent' : 'queued_offline',
         isMe: true,
       };
 
       setMessages((prev) => ({
         ...prev,
-        [peerId]: [...(prev[peerId] || []), newMsg],
+        [canonicalId]: [...(prev[canonicalId] || []), newMsg],
       }));
 
       if (isPeerInRange) {
-        return transportManager.send(peerId, text);
+        return transportManager.sendPacket(canonicalId, {
+          id: newMsg.id,
+          type: 'CHAT_MSG',
+          senderId: `peer_${myShortId}`,
+          senderShortId: myShortId,
+          fullSenderId: myProfile.id,
+          senderName: myProfile.displayName || myProfile.deviceName || 'Radii User',
+          targetPeerId: canonicalId,
+          targetShortId: targetShortId,
+          text,
+          timestamp: Date.now(),
+        });
       } else {
         // Enqueue in zero-leak outbox
         outbox.enqueue(
           {
-            conversationId: peerId,
+            conversationId: canonicalId,
             senderId: myProfile.id,
             senderName: myProfile.displayName,
             text,
             isMe: true,
             transport: 'nearby',
           },
-          ['offline', 'lan'],
+          ['offline', 'online'],
           'peer_out_of_radio_range'
         );
         return false;
@@ -208,7 +438,7 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
         senderName: myProfile.displayName,
         timestamp: Date.now(),
         emergencyMessage: message,
-        transportBroadcast: ['ble', 'nearby', 'lan'],
+        transportBroadcast: ['ble', 'nearby', 'location'],
         isActive: true,
       };
       setActiveSOS(alert);
@@ -274,6 +504,24 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
     [eventRooms]
   );
 
+  const createEventRoom = useCallback(
+    (name: string, description?: string, customCode?: string): EventRoom => {
+      const code = (customCode?.trim().toUpperCase() || Math.random().toString(36).substring(2, 6).toUpperCase());
+      const newRoom: EventRoom = {
+        id: `room_${Date.now()}`,
+        name: name.trim() || `Room ${code}`,
+        code,
+        category: 'campus',
+        memberCount: 1,
+        isActive: true,
+        description: description?.trim() || 'Offline LAN & Mesh Channel',
+      };
+      setEventRooms((prev) => [newRoom, ...prev]);
+      return newRoom;
+    },
+    []
+  );
+
   const startPlusTrial = useCallback(() => {
     entitlements.startFreeTrial();
   }, []);
@@ -295,28 +543,174 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, []);
 
   const pairPeer = useCallback((peerId: string) => {
+    const canonicalId = normalizePeerId(peerId);
     setPeers((prev) =>
-      prev.map((p) => (p.id === peerId ? { ...p, isPaired: true } : p))
+      prev.map((p) => (p.id === canonicalId || p.id === peerId ? { ...p, isPaired: true } : p))
     );
   }, []);
 
-  const acceptConnection = useCallback((req: IncomingConnectionRequest) => {
-    setIncomingRequest(null);
-    setPeers((prev) =>
-      prev.map((p) => (p.id === req.peerId ? { ...p, isPaired: true } : p))
-    );
+  const unpairPeer = useCallback(
+    (peerId: string) => {
+      const canonicalId = normalizePeerId(peerId);
+      const myShortId = myProfile.id.slice(-6).toLowerCase();
+      const targetShortId = peerId.slice(-6).toLowerCase();
+
+      setPeers((prev) =>
+        prev.map((p) =>
+          p.id === canonicalId || p.id.toLowerCase().endsWith(targetShortId)
+            ? { ...p, isPaired: false }
+            : p
+        )
+      );
+      setConnectionStateMap((prev) => ({
+        ...prev,
+        [peerId]: 'idle',
+        [canonicalId]: 'idle',
+        [`ble_${targetShortId}`]: 'idle',
+      }));
+
+      // Transmit disconnection notice over the radio
+      transportManager.sendPacket(canonicalId, {
+        type: 'CONNECTION_DISCONNECTED',
+        id: `disc_${Date.now()}`,
+        senderId: `peer_${myShortId}`,
+        senderShortId: myShortId,
+        targetPeerId: canonicalId,
+        targetShortId: targetShortId,
+        timestamp: Date.now(),
+      });
+    },
+    [myProfile]
+  );
+
+  const acceptConnection = useCallback(
+    (req: IncomingConnectionRequest) => {
+      const canonicalId = normalizePeerId(req.peerId);
+      const myShortId = myProfile.id.slice(-6).toLowerCase();
+      const targetShortId = req.peerId.slice(-6).toLowerCase();
+
+      setIncomingRequest(null);
+      setPeers((prev) =>
+        prev.map((p) =>
+          p.id === canonicalId || p.id.toLowerCase().endsWith(targetShortId)
+            ? { ...p, isPaired: true }
+            : p
+        )
+      );
+      setConnectionStateMap((prev) => ({
+        ...prev,
+        [req.peerId]: 'accepted',
+        [canonicalId]: 'accepted',
+        [`ble_${targetShortId}`]: 'accepted',
+      }));
+
+      // Transmit acceptance packet back over the radio
+      transportManager.sendPacket(canonicalId, {
+        type: 'CONNECTION_ACCEPTED',
+        id: `acc_${Date.now()}`,
+        senderId: `peer_${myShortId}`,
+        senderShortId: myShortId,
+        fullSenderId: myProfile.id,
+        senderName: myProfile.displayName || myProfile.deviceName || 'Radii User',
+        targetPeerId: canonicalId,
+        targetShortId: targetShortId,
+        timestamp: Date.now(),
+      });
+    },
+    [myProfile]
+  );
+
+  const declineConnection = useCallback(
+    (req: IncomingConnectionRequest) => {
+      const canonicalId = normalizePeerId(req.peerId);
+      const myShortId = myProfile.id.slice(-6).toLowerCase();
+      const targetShortId = req.peerId.slice(-6).toLowerCase();
+
+      setIncomingRequest(null);
+      setConnectionStateMap((prev) => ({
+        ...prev,
+        [req.peerId]: 'declined',
+        [canonicalId]: 'declined',
+        [`ble_${targetShortId}`]: 'declined',
+      }));
+
+      // Transmit decline packet back over the radio
+      transportManager.sendPacket(canonicalId, {
+        type: 'CONNECTION_DECLINED',
+        id: `dec_${Date.now()}`,
+        senderId: `peer_${myShortId}`,
+        senderShortId: myShortId,
+        fullSenderId: myProfile.id,
+        senderName: myProfile.displayName || myProfile.deviceName || 'Radii User',
+        targetPeerId: canonicalId,
+        targetShortId: targetShortId,
+        timestamp: Date.now(),
+      });
+    },
+    [myProfile]
+  );
+
+  const requestConnection = useCallback(
+    (peer: Peer) => {
+      const canonicalId = normalizePeerId(peer.id);
+      const myShortId = myProfile.id.slice(-6).toLowerCase();
+      const targetShortId = peer.id.slice(-6).toLowerCase();
+      const code = Math.floor(1000 + Math.random() * 9000).toString();
+
+      setConnectionStateMap((prev) => ({
+        ...prev,
+        [peer.id]: 'waiting',
+        [canonicalId]: 'waiting',
+        [`ble_${targetShortId}`]: 'waiting',
+      }));
+      setVerificationCodeMap((prev) => ({
+        ...prev,
+        [peer.id]: code,
+        [canonicalId]: code,
+        [`ble_${targetShortId}`]: code,
+      }));
+
+      // Transmit connection request packet over the radio
+      transportManager.sendPacket(canonicalId, {
+        type: 'CONNECTION_REQUEST',
+        id: `req_${Date.now()}`,
+        senderId: `peer_${myShortId}`,
+        senderShortId: myShortId,
+        fullSenderId: myProfile.id,
+        senderName: myProfile.displayName || myProfile.deviceName || 'Radii User',
+        senderDevice: myProfile.deviceName || 'Android Radio',
+        targetPeerId: canonicalId,
+        targetShortId: targetShortId,
+        verificationCode: code,
+        transport: peer.activeTransport || 'nearby',
+        timestamp: Date.now(),
+      });
+    },
+    [myProfile]
+  );
+
+  const cancelConnectionRequest = useCallback((peerId: string) => {
+    const canonicalId = normalizePeerId(peerId);
+    const targetShortId = peerId.slice(-6).toLowerCase();
+    setConnectionStateMap((prev) => ({
+      ...prev,
+      [peerId]: 'idle',
+      [canonicalId]: 'idle',
+      [`ble_${targetShortId}`]: 'idle',
+    }));
   }, []);
 
-  const declineConnection = useCallback((_req: IncomingConnectionRequest) => {
-    setIncomingRequest(null);
-  }, []);
-
-  const requestConnection = useCallback((peer: Peer) => {
-    // Triggers local handshake state
-    setPeers((prev) =>
-      prev.map((p) => (p.id === peer.id ? { ...p, isPaired: true } : p))
-    );
-  }, []);
+  const rescan = useCallback(async () => {
+    startScanWithTimeout(18000);
+    // Keep already paired peers, reset unpaired peers on radar
+    setPeers((prev) => prev.filter((p) => p.isPaired));
+    try {
+      await transportManager.stop();
+      await transportManager.start();
+    } catch (err) {
+      console.warn('Rescan error:', err);
+    }
+  }, [startScanWithTimeout]);
 
   const value = useMemo<OrbitorContextValue>(
     () => ({
@@ -331,6 +725,7 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
       eventRooms,
       fileTransfers,
       isScanning,
+      permissionsGranted,
       setNetworkMode,
       setAutoUpgrade,
       sendMessage,
@@ -339,15 +734,22 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
       dismissSOS,
       startFileFling,
       joinEventRoom,
+      createEventRoom,
       startPlusTrial,
       subscribePlus,
       canUseFeature,
       updateUserProfile,
       pairPeer,
+      unpairPeer,
       incomingRequest,
+      connectionStateMap,
+      verificationCodeMap,
       acceptConnection,
       declineConnection,
       requestConnection,
+      cancelConnectionRequest,
+      rescan,
+      setPermissionsGranted,
     }),
     [
       myProfile,
@@ -361,6 +763,7 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
       eventRooms,
       fileTransfers,
       isScanning,
+      permissionsGranted,
       setNetworkMode,
       setAutoUpgrade,
       sendMessage,
@@ -369,15 +772,21 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
       dismissSOS,
       startFileFling,
       joinEventRoom,
+      createEventRoom,
       startPlusTrial,
       subscribePlus,
       canUseFeature,
       updateUserProfile,
       pairPeer,
+      unpairPeer,
       incomingRequest,
+      connectionStateMap,
+      verificationCodeMap,
       acceptConnection,
       declineConnection,
       requestConnection,
+      cancelConnectionRequest,
+      rescan,
     ]
   );
 

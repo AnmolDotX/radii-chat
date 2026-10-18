@@ -17,7 +17,7 @@ export const PlusComingSoonModal: React.FC<PlusComingSoonModalProps> = ({
 
   const perks = [
     {
-      title: 'Orbitor Link Relay',
+      title: 'Radii Link Relay',
       desc: 'Deliver encrypted messages over the internet when friends walk out of radio range.',
       tag: 'CLOUD RELAY',
     },
@@ -51,7 +51,7 @@ export const PlusComingSoonModal: React.FC<PlusComingSoonModalProps> = ({
           ]}>
           <View style={styles.header}>
             <Badge label="COMING SOON // CLOUD LAYER" variant="purple" size="sm" />
-            <Text style={[styles.title, { color: theme.text }]}>Orbitor Plus</Text>
+            <Text style={[styles.title, { color: theme.text }]}>Radii Plus</Text>
             <Text style={[styles.priceTag, { color: theme.plus }]}>₹99 / month</Text>
             <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
               All offline mesh radio features (BLE, Nearby, LAN, Voice, Files, SOS) remain 100% free forever. Plus adds the optional cloud layer when friends are far away.

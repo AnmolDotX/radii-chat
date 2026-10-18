@@ -5,6 +5,7 @@ import Animated, {
   useAnimatedStyle,
   withRepeat,
   withTiming,
+  cancelAnimation,
   Easing,
   interpolate,
 } from 'react-native-reanimated';
@@ -21,6 +22,7 @@ interface RadarSweepProps {
   onSelectPeer: (peer: Peer) => void;
   onLongPressPeer?: (peer: Peer) => void;
   isScanning?: boolean;
+  onPressRadar?: () => void;
 }
 
 export const RadarSweep: React.FC<RadarSweepProps> = ({
@@ -28,6 +30,7 @@ export const RadarSweep: React.FC<RadarSweepProps> = ({
   onSelectPeer,
   onLongPressPeer,
   isScanning = true,
+  onPressRadar,
 }) => {
   const theme = useOrbitorTheme();
 
@@ -37,15 +40,20 @@ export const RadarSweep: React.FC<RadarSweepProps> = ({
   useEffect(() => {
     if (isScanning) {
       rotation.value = withRepeat(
-        withTiming(360, { duration: 4500, easing: Easing.linear }),
+        withTiming(360, { duration: 4000, easing: Easing.linear }),
         -1,
         false
       );
       pulse.value = withRepeat(
-        withTiming(1, { duration: 3000, easing: Easing.out(Easing.quad) }),
+        withTiming(1, { duration: 2400, easing: Easing.out(Easing.quad) }),
         -1,
         false
       );
+    } else {
+      cancelAnimation(rotation);
+      cancelAnimation(pulse);
+      rotation.value = 0;
+      pulse.value = 0;
     }
   }, [isScanning, rotation, pulse]);
 
@@ -56,8 +64,8 @@ export const RadarSweep: React.FC<RadarSweepProps> = ({
   });
 
   const pulseAnimatedStyle = useAnimatedStyle(() => {
-    const scale = interpolate(pulse.value, [0, 1], [0.8, 1.3]);
-    const opacity = interpolate(pulse.value, [0, 0.6, 1], [0.5, 0.15, 0]);
+    const scale = interpolate(pulse.value, [0, 1], [0.8, 1.35]);
+    const opacity = interpolate(pulse.value, [0, 0.6, 1], [0.45, 0.15, 0]);
     return {
       transform: [{ scale }],
       opacity,
@@ -77,8 +85,11 @@ export const RadarSweep: React.FC<RadarSweepProps> = ({
   };
 
   return (
-    <View style={[styles.container, { width: RADAR_SIZE, height: RADAR_SIZE }]}>
-      {/* Outer Glow & Background */}
+    <Pressable
+      onPress={onPressRadar}
+      disabled={!onPressRadar}
+      style={[styles.container, { width: RADAR_SIZE, height: RADAR_SIZE }]}>
+      {/* Outer Solid Surface with Soft Subtle Border */}
       <View
         style={[
           styles.outerRing,
@@ -89,58 +100,91 @@ export const RadarSweep: React.FC<RadarSweepProps> = ({
         ]}
       />
 
-      {/* Ultra-fine Concentric Distance Rings */}
-      <View
-        style={[
-          styles.ring,
-          {
-            width: RADAR_SIZE * 0.72,
-            height: RADAR_SIZE * 0.72,
-            borderColor: theme.borderSubtle,
-          },
-        ]}
-      />
-      <View
-        style={[
-          styles.ring,
-          {
-            width: RADAR_SIZE * 0.44,
-            height: RADAR_SIZE * 0.44,
-            borderColor: theme.borderSubtle,
-          },
-        ]}
-      />
+      {/* Dim Crosshair Axes */}
+      <View style={[styles.axisHorizontal, { width: RADAR_SIZE * 0.92 }]} />
+      <View style={[styles.axisVertical, { height: RADAR_SIZE * 0.92 }]} />
 
-      {/* Sweep Beam */}
-      <Animated.View
+      {/* Concentric Distance Ring 1 (Outer ~25m) */}
+      <View
         style={[
-          styles.sweepContainer,
-          { width: RADAR_SIZE, height: RADAR_SIZE },
-          sweepAnimatedStyle,
+          styles.ring,
+          {
+            width: RADAR_SIZE * 0.78,
+            height: RADAR_SIZE * 0.78,
+            borderColor: 'rgba(255, 255, 255, 0.07)',
+          },
         ]}>
-        <View style={[styles.sweepLine, { backgroundColor: theme.accentCyan }]} />
-      </Animated.View>
+        <Text style={[styles.ringLabel, { color: theme.textTertiary }]}>25m</Text>
+      </View>
 
-      {/* Center Emitter Halo & Dot */}
-      <Animated.View
+      {/* Concentric Distance Ring 2 (Mid ~12m) */}
+      <View
         style={[
-          styles.pulseHalo,
+          styles.ring,
           {
-            borderColor: theme.accentCyan,
-            width: 48,
-            height: 48,
+            width: RADAR_SIZE * 0.52,
+            height: RADAR_SIZE * 0.52,
+            borderColor: 'rgba(255, 255, 255, 0.08)',
           },
-          pulseAnimatedStyle,
-        ]}
-      />
+        ]}>
+        <Text style={[styles.ringLabel, { color: theme.textTertiary }]}>12m</Text>
+      </View>
+
+      {/* Concentric Distance Ring 3 (Close ~4m, subtle emerald glow) */}
+      <View
+        style={[
+          styles.ring,
+          {
+            width: RADAR_SIZE * 0.28,
+            height: RADAR_SIZE * 0.28,
+            borderColor: 'rgba(0, 194, 13, 0.18)',
+          },
+        ]}>
+        <Text style={[styles.ringLabel, { color: theme.accentCyan, opacity: 0.6 }]}>4m</Text>
+      </View>
+
+      {/* Sweeping Beam — ONLY rendered when actively scanning */}
+      {isScanning && (
+        <Animated.View
+          style={[
+            styles.sweepContainer,
+            { width: RADAR_SIZE, height: RADAR_SIZE },
+            sweepAnimatedStyle,
+          ]}>
+          <View style={[styles.sweepLine, { backgroundColor: theme.accentCyan }]} />
+        </Animated.View>
+      )}
+
+      {/* Center Emitter Halo — ONLY pulses when actively scanning */}
+      {isScanning && (
+        <Animated.View
+          style={[
+            styles.pulseHalo,
+            {
+              borderColor: theme.accentCyan,
+              width: 48,
+              height: 48,
+            },
+            pulseAnimatedStyle,
+          ]}
+        />
+      )}
+
+      {/* Center Stationary Core Node */}
       <View
         style={[
           styles.centerNode,
           {
-            backgroundColor: theme.accentCyan,
+            backgroundColor: isScanning ? theme.accentCyan : theme.surfaceElevated,
+            borderColor: isScanning ? theme.accentCyan : theme.border,
           },
         ]}>
-        <View style={[styles.centerInnerDot, { backgroundColor: theme.background }]} />
+        <View
+          style={[
+            styles.centerInnerDot,
+            { backgroundColor: isScanning ? theme.background : theme.accentCyan },
+          ]}
+        />
       </View>
 
       {/* Orbiting Unpaired Peers */}
@@ -177,7 +221,7 @@ export const RadarSweep: React.FC<RadarSweepProps> = ({
           </Pressable>
         );
       })}
-    </View>
+    </Pressable>
   );
 };
 
@@ -196,10 +240,29 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     borderWidth: 1,
   },
+  axisHorizontal: {
+    position: 'absolute',
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  axisVertical: {
+    position: 'absolute',
+    width: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+  },
   ring: {
     position: 'absolute',
     borderRadius: Radius.full,
     borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  ringLabel: {
+    fontSize: 8,
+    fontFamily: Typography.monoFamily,
+    letterSpacing: 0.5,
+    marginTop: 2,
+    opacity: 0.45,
   },
   sweepContainer: {
     position: 'absolute',
@@ -224,11 +287,12 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
     zIndex: 10,
   },
   centerInnerDot: {
-    width: 6,
-    height: 6,
+    width: 5,
+    height: 5,
     borderRadius: Radius.full,
   },
   peerNodeWrapper: {

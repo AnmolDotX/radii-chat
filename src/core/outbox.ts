@@ -10,7 +10,7 @@ class OutboxManager {
 
   public enqueue(
     message: Omit<Message, 'id' | 'timestamp' | 'status'>,
-    allowedModes: NetworkMode[] = ['offline', 'lan'],
+    allowedModes: NetworkMode[] = ['offline', 'online'],
     reason: OutboxItem['reason'] = 'peer_out_of_radio_range'
   ): OutboxItem {
     const item: OutboxItem = {
