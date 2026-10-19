@@ -3,18 +3,16 @@ import { View, Text, StyleSheet, Pressable, Platform } from 'react-native';
 import PagerView from 'react-native-pager-view';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useOrbitorTheme } from '@/theme';
+import { useOrbitorTheme, Radius } from '@/theme';
 
 import RadarScreen from '@/screens/RadarScreen';
 import ChatsScreen from '@/screens/ChatsScreen';
-import FlingScreen from '@/screens/FlingScreen';
 import SettingsScreen from '@/screens/SettingsScreen';
 
 const TABS = [
   { id: 0, title: 'Radar', icon: 'radio-outline', activeIcon: 'radio' },
   { id: 1, title: 'Mesh Chats', icon: 'chatbubble-ellipses-outline', activeIcon: 'chatbubble-ellipses' },
-  { id: 2, title: 'File Fling', icon: 'swap-vertical-outline', activeIcon: 'swap-vertical' },
-  { id: 3, title: 'Settings', icon: 'settings-outline', activeIcon: 'settings' },
+  { id: 2, title: 'Settings', icon: 'settings-outline', activeIcon: 'settings' },
 ] as const;
 
 export default function PagerAppShell() {
@@ -50,9 +48,6 @@ export default function PagerAppShell() {
           <ChatsScreen onNavigateToRadar={() => handleSelectTab(0)} />
         </View>
         <View key="2" style={styles.page}>
-          <FlingScreen />
-        </View>
-        <View key="3" style={styles.page}>
           <SettingsScreen />
         </View>
       </PagerView>
@@ -63,7 +58,6 @@ export default function PagerAppShell() {
           styles.tabBar,
           {
             backgroundColor: theme.surface,
-            borderTopColor: theme.border,
             height: barHeight,
             paddingBottom: bottomInset,
           },
@@ -76,7 +70,7 @@ export default function PagerAppShell() {
               onPress={() => handleSelectTab(tab.id)}
               android_ripple={{
                 color: theme.accentCyanMuted,
-                borderless: false,
+                borderless: true,
                 radius: 28,
               }}
               style={({ pressed }) => [
@@ -85,17 +79,23 @@ export default function PagerAppShell() {
                   opacity: pressed ? 0.75 : 1,
                 },
               ]}>
-              <Ionicons
-                name={(isActive ? tab.activeIcon : tab.icon) as any}
-                size={22}
-                color={isActive ? theme.accentCyan : theme.textTertiary}
-              />
+              <View
+                style={[
+                  styles.iconContainer,
+                  isActive && { backgroundColor: theme.accentCyanMuted },
+                ]}>
+                <Ionicons
+                  name={(isActive ? tab.activeIcon : tab.icon) as any}
+                  size={21}
+                  color={isActive ? theme.accentCyan : theme.textTertiary}
+                />
+              </View>
               <Text
                 style={[
                   styles.tabLabel,
                   {
                     color: isActive ? theme.accentCyan : theme.textTertiary,
-                    fontWeight: isActive ? '600' : '400',
+                    fontWeight: isActive ? '600' : '500',
                   },
                 ]}>
                 {tab.title}
@@ -122,27 +122,34 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-around',
-    borderTopWidth: 1,
-    paddingTop: 8,
-    elevation: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.15,
+    borderTopWidth: 0,
+    paddingTop: 6,
+    elevation: 1,
+    shadowColor: Platform.select({ android: 'rgba(0, 0, 0, 0.05)', default: '#000' }),
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.02,
     shadowRadius: 6,
   },
   tabItem: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 4,
-    borderRadius: 16,
+    paddingVertical: 2,
+    gap: 3,
+  },
+  iconContainer: {
+    width: 58,
+    height: 32,
+    borderRadius: Radius.full,
     overflow: 'hidden',
-    gap: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   tabLabel: {
     fontSize: 11,
     fontFamily: Platform.select({ ios: 'system-ui', android: 'sans-serif-medium' }),
-    letterSpacing: -0.2,
+    letterSpacing: -0.1,
     includeFontPadding: false,
   },
 });
+

@@ -43,7 +43,6 @@ export const PeerAvatar: React.FC<PeerAvatarProps> = ({
           styles.circle,
           {
             backgroundColor: theme.surfaceElevated,
-            borderColor: theme.border,
           },
         ]}>
         <Text
@@ -64,7 +63,6 @@ export const PeerAvatar: React.FC<PeerAvatarProps> = ({
             styles.signalDot,
             {
               backgroundColor: signalColor,
-              borderColor: theme.background,
             },
           ]}
         />
@@ -83,7 +81,7 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     borderRadius: Radius.full,
-    borderWidth: 1,
+    borderWidth: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -99,6 +97,6 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: Radius.full,
-    borderWidth: 1.5,
+    borderWidth: 0,
   },
 });

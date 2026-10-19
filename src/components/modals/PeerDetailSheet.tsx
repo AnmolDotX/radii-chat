@@ -1,7 +1,9 @@
 import React from 'react';
-import { View, Text, StyleSheet, Modal, Pressable, Alert } from 'react-native';
+import { View, Text, StyleSheet, Modal, Pressable, Alert, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { useOrbitorTheme, Typography, Radius, Spacing } from '../../theme';
+import { Ionicons } from '@expo/vector-icons';
+import { useOrbitorTheme, Typography, Radius, Spacing, Shadows } from '../../theme';
 import { Peer } from '../../core/types';
 import { PeerAvatar } from '../common/PeerAvatar';
 import { Badge } from '../common/Badge';
@@ -11,7 +13,9 @@ interface PeerDetailSheetProps {
   peer: Peer | null;
   visible: boolean;
   onClose: () => void;
-  onConnect: (peer: Peer) => void;
+  onConnect?: (peer: Peer) => void;
+  isInsideChat?: boolean;
+  onDisconnect?: () => void;
 }
 
 export const PeerDetailSheet: React.FC<PeerDetailSheetProps> = ({
@@ -19,25 +23,33 @@ export const PeerDetailSheet: React.FC<PeerDetailSheetProps> = ({
   visible,
   onClose,
   onConnect,
+  isInsideChat = false,
+  onDisconnect,
 }) => {
   const theme = useOrbitorTheme();
+  const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { unpairPeer } = useOrbitor();
+  const { unpairPeer, deleteConversation } = useOrbitor();
 
   if (!peer) return null;
 
   const handleDisconnect = () => {
     Alert.alert(
-      'Disconnect Companion',
-      `Are you sure you want to unpair and disconnect from ${peer.name}?`,
+      'Unpair & Delete Chat',
+      `Are you sure you want to unpair and remove all messages with ${peer.name}?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Disconnect',
+          text: 'Unpair & Delete',
           style: 'destructive',
           onPress: () => {
+            deleteConversation(peer.id);
             unpairPeer(peer.id);
             onClose();
+            onDisconnect?.();
+            if (isInsideChat) {
+              router.back();
+            }
           },
         },
       ]
@@ -52,66 +64,128 @@ export const PeerDetailSheet: React.FC<PeerDetailSheetProps> = ({
     });
   };
 
+  const connectionLabel =
+    peer.activeTransport === 'nearby'
+      ? 'Wi-Fi Direct (Nearby)'
+      : peer.activeTransport === 'ble'
+      ? 'Bluetooth LE Mesh'
+      : (peer.activeTransport || 'NEARBY').toUpperCase();
+
+  // Android navigation bar clearance: native 3-button bar is 48dp, ensure large clearance so it never overlaps
+  const sheetBottomPadding =
+    (Platform.OS === 'android' ? Math.max(insets.bottom, 48) : Math.max(insets.bottom, 16)) +
+    Spacing.base;
+
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      statusBarTranslucent={true}
+      onRequestClose={onClose}>
       <View style={styles.overlay}>
+        {/* Tapping anywhere on the dimmed background closes the bottomsheet */}
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={onClose}
+          accessibilityLabel="Close bottom sheet"
+          accessibilityRole="button"
+        />
+
+        {/* Bottom Sheet Card */}
         <View
           style={[
             styles.sheet,
             {
               backgroundColor: theme.surface,
-              borderColor: theme.border,
+              paddingBottom: sheetBottomPadding,
             },
           ]}>
+          {/* Top Bar with Title and Close Cross Icon */}
+          <View style={styles.topBar}>
+            <View style={{ width: 36 }} />
+            <Text style={[styles.sheetTitle, { color: theme.textTertiary }]}>
+              COMPANION PROFILE
+            </Text>
+            <Pressable
+              onPress={onClose}
+              hitSlop={12}
+              style={({ pressed }) => [
+                styles.closeButton,
+                {
+                  backgroundColor: theme.surfaceElevated,
+                  opacity: pressed ? 0.7 : 1,
+                },
+              ]}>
+              <Ionicons name="close" size={18} color={theme.text} />
+            </Pressable>
+          </View>
+
           <View style={styles.header}>
-            <PeerAvatar peer={peer} size={56} showSignal={true} />
+            <PeerAvatar peer={peer} size={64} showSignal={true} />
             <Text style={[styles.name, { color: theme.text }]}>{peer.name}</Text>
             <Text style={[styles.deviceModel, { color: theme.textSecondary }]}>
-              {peer.deviceName || peer.platform.toUpperCase()}
+              {peer.deviceName || (peer.platform === 'android' ? 'Android Device' : peer.platform.toUpperCase())}
             </Text>
           </View>
 
           <View style={[styles.specsBox, { backgroundColor: theme.surfaceElevated }]}>
             <View style={styles.specRow}>
               <Text style={[styles.specLabel, { color: theme.textTertiary }]}>Radio Signal</Text>
-              <Text style={[styles.specValue, { color: theme.text }]}>{peer.rssi} dBm</Text>
-            </View>
-
-            <View style={styles.specRow}>
-              <Text style={[styles.specLabel, { color: theme.textTertiary }]}>Estimated Distance</Text>
-              <Text style={[styles.specValue, { color: theme.text }]}>
-                {peer.distanceBracket.toUpperCase()} (~
-                {peer.distanceBracket === 'immediate'
-                  ? '1-3m'
-                  : peer.distanceBracket === 'near'
-                  ? '4-12m'
-                  : '15-30m'}
-                )
+              <Text
+                style={[
+                  styles.specValue,
+                  { color: peer.rssi && peer.rssi > -95 ? theme.success : theme.text },
+                ]}>
+                {peer.rssi && peer.rssi > -99 ? `${peer.rssi} dBm` : 'Offline / Cached'}
               </Text>
             </View>
 
             <View style={styles.specRow}>
-              <Text style={[styles.specLabel, { color: theme.textTertiary }]}>Direct Link</Text>
-              <Badge label={peer.activeTransport} transport={peer.activeTransport} size="sm" />
+              <Text style={[styles.specLabel, { color: theme.textTertiary }]}>Device Model</Text>
+              <Text style={[styles.specValue, { color: theme.text }]}>
+                {peer.deviceName || (peer.platform === 'android' ? 'Android Phone' : 'Radio Device')}
+              </Text>
+            </View>
+
+            <View style={styles.specRow}>
+              <Text style={[styles.specLabel, { color: theme.textTertiary }]}>Connection Type</Text>
+              <Badge label={connectionLabel} transport={peer.activeTransport || 'nearby'} size="sm" />
             </View>
 
             <View style={styles.specRow}>
               <Text style={[styles.specLabel, { color: theme.textTertiary }]}>Pairing Status</Text>
               <Text style={[styles.specValue, { color: peer.isPaired ? theme.success : theme.warning }]}>
-                {peer.isPaired ? 'Paired & Verified' : 'Not Connected'}
+                {peer.isPaired ? 'Paired Companion' : 'Not Connected'}
               </Text>
             </View>
           </View>
 
+          {/* Bottom Action: Unpair/Disconnect or Connect */}
           <View style={styles.actionsRow}>
-            {peer.isPaired ? (
+            {isInsideChat ? (
+              <Pressable
+                onPress={handleDisconnect}
+                style={({ pressed }) => [
+                  styles.fullDisconnectButton,
+                  {
+                    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+                    opacity: pressed ? 0.75 : 1,
+                  },
+                ]}>
+                <Ionicons name="trash-outline" size={16} color={theme.danger} style={{ marginRight: 6 }} />
+                <Text style={[styles.disconnectText, { color: theme.danger }]}>
+                  Unpair & Delete Chat
+                </Text>
+              </Pressable>
+            ) : peer.isPaired ? (
               <>
                 <Pressable
                   onPress={handleDisconnect}
                   style={({ pressed }) => [
                     styles.disconnectButton,
                     {
-                      borderColor: theme.danger,
+                      backgroundColor: 'rgba(239, 68, 68, 0.12)',
                       opacity: pressed ? 0.75 : 1,
                     },
                   ]}>
@@ -133,37 +207,22 @@ export const PeerDetailSheet: React.FC<PeerDetailSheetProps> = ({
                 </Pressable>
               </>
             ) : (
-              <>
-                <Pressable
-                  onPress={onClose}
-                  style={({ pressed }) => [
-                    styles.dismissButton,
-                    {
-                      backgroundColor: theme.surfaceElevated,
-                      borderColor: theme.border,
-                      opacity: pressed ? 0.75 : 1,
-                    },
-                  ]}>
-                  <Text style={[styles.dismissText, { color: theme.textSecondary }]}>Close</Text>
-                </Pressable>
-
-                <Pressable
-                  onPress={() => {
-                    onClose();
-                    onConnect(peer);
-                  }}
-                  style={({ pressed }) => [
-                    styles.connectButton,
-                    {
-                      backgroundColor: theme.text,
-                      opacity: pressed ? 0.85 : 1,
-                    },
-                  ]}>
-                  <Text style={[styles.connectText, { color: theme.background }]}>
-                    Request Connect
-                  </Text>
-                </Pressable>
-              </>
+              <Pressable
+                onPress={() => {
+                  onClose();
+                  onConnect?.(peer);
+                }}
+                style={({ pressed }) => [
+                  styles.connectButton,
+                  {
+                    backgroundColor: theme.text,
+                    opacity: pressed ? 0.85 : 1,
+                  },
+                ]}>
+                <Text style={[styles.connectText, { color: theme.background }]}>
+                  Request Connect
+                </Text>
+              </Pressable>
             )}
           </View>
         </View>
@@ -181,9 +240,36 @@ const styles = StyleSheet.create({
   sheet: {
     borderTopLeftRadius: Radius.xl,
     borderTopRightRadius: Radius.xl,
-    borderTopWidth: 1,
-    padding: Spacing.xl,
+    borderTopWidth: 0,
+    ...Shadows.elevated,
+    paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.base,
     gap: Spacing.md,
+  },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: -4,
+  },
+  sheetTitle: {
+    fontSize: Typography.sizes.xs - 2,
+    fontFamily: Typography.monoFamily,
+    fontWeight: Typography.weights.semibold,
+    letterSpacing: 1,
+  },
+  closeButton: {
+    width: 30,
+    height: 30,
+    borderRadius: Radius.full,
+    borderWidth: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeIcon: {
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 15,
   },
   header: {
     alignItems: 'center',
@@ -193,7 +279,7 @@ const styles = StyleSheet.create({
     fontSize: Typography.sizes.lg,
     fontWeight: Typography.weights.bold,
     fontFamily: Typography.fontFamily,
-    marginTop: 4,
+    marginTop: 2,
   },
   deviceModel: {
     fontSize: Typography.sizes.xs + 1,
@@ -203,6 +289,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.lg,
     padding: Spacing.md,
     gap: Spacing.sm,
+    ...Shadows.subtle,
   },
   specRow: {
     flexDirection: 'row',
@@ -227,7 +314,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: Spacing.sm + 4,
     borderRadius: Radius.lg,
-    borderWidth: 1,
+    borderWidth: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -239,8 +326,10 @@ const styles = StyleSheet.create({
     flex: 2,
     paddingVertical: Spacing.sm + 4,
     borderRadius: Radius.lg,
+    borderWidth: 0,
     alignItems: 'center',
     justifyContent: 'center',
+    ...Shadows.subtle,
   },
   connectText: {
     fontSize: Typography.sizes.sm,
@@ -251,7 +340,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: Spacing.sm + 4,
     borderRadius: Radius.lg,
-    borderWidth: 1,
+    borderWidth: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -259,5 +348,14 @@ const styles = StyleSheet.create({
     fontSize: Typography.sizes.sm,
     fontWeight: Typography.weights.bold,
     fontFamily: Typography.fontFamily,
+  },
+  fullDisconnectButton: {
+    width: '100%',
+    flexDirection: 'row',
+    paddingVertical: Spacing.md,
+    borderRadius: Radius.lg,
+    borderWidth: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

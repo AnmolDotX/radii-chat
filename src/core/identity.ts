@@ -23,13 +23,8 @@ export function generateUniquePeerId(): string {
   return `usr_${rand}${time}`;
 }
 
-// IMPORTANT: Do NOT call generateUniquePeerId() at module load!
-// Use a stable sentinel that loadPersistedProfile() will replace.
-// This prevents the race where native module gets ID_A and JS checks ID_B.
-const UNINITIALIZED_ID = '__radii_uninitialized__';
-
 const DEFAULT_USER: UserProfile = {
-  id: UNINITIALIZED_ID,
+  id: generateUniquePeerId(),
   displayName: detectedModel,
   publicKey: 'radii_pubkey_ed25519_9d428bf1e320aa',
   deviceModel: detectedModel,
@@ -59,7 +54,7 @@ export async function loadPersistedProfile(): Promise<UserProfile> {
         const parsed = JSON.parse(raw) as UserProfile;
         // Migrate legacy hardcoded ID or uninitialized sentinel
         const validId =
-          !parsed.id || parsed.id === 'usr_local_me_01' || parsed.id === UNINITIALIZED_ID
+          !parsed.id || parsed.id === 'usr_local_me_01' || parsed.id.includes('uninitialized')
             ? generateUniquePeerId()
             : parsed.id;
 
@@ -85,16 +80,13 @@ export async function loadPersistedProfile(): Promise<UserProfile> {
     // If native module is null or unlinked, continue with in-memory profile
   }
 
-  // No persisted profile found — generate a fresh stable ID now and persist it
-  if (currentProfile.id === UNINITIALIZED_ID) {
-    currentProfile.id = generateUniquePeerId();
-    try {
-      if (AsyncStorageModule && typeof AsyncStorageModule.setItem === 'function') {
-        await AsyncStorageModule.setItem(STORAGE_KEY, JSON.stringify(currentProfile));
-      }
-    } catch {
-      // Graceful fallback
+  // No persisted profile found — persist currentProfile now
+  try {
+    if (AsyncStorageModule && typeof AsyncStorageModule.setItem === 'function') {
+      await AsyncStorageModule.setItem(STORAGE_KEY, JSON.stringify(currentProfile));
     }
+  } catch {
+    // Graceful fallback
   }
 
   _profileReady = true;

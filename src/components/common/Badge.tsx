@@ -68,9 +68,8 @@ export const Badge: React.FC<BadgeProps> = ({
         styles.container,
         {
           backgroundColor: colors.bg,
-          borderColor: colors.border,
           paddingVertical: isSm ? 2 : 4,
-          paddingHorizontal: isSm ? Spacing.xs + 2 : Spacing.sm + 2,
+          paddingHorizontal: isSm ? Spacing.xs + 3 : Spacing.sm + 2,
         },
         style,
       ]}>
@@ -91,7 +90,7 @@ export const Badge: React.FC<BadgeProps> = ({
 const styles = StyleSheet.create({
   container: {
     borderRadius: Radius.full,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 0,
     alignSelf: 'flex-start',
     flexDirection: 'row',
     alignItems: 'center',

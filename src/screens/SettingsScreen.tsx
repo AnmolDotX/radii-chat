@@ -5,23 +5,54 @@ import {
   StyleSheet,
   ScrollView,
   Pressable,
+  TextInput,
+  Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useOrbitorTheme, Typography, Radius, Spacing, Layout } from '@/theme';
+import { Ionicons } from '@expo/vector-icons';
+import { useOrbitorTheme, useThemeContext, Typography, Radius, Spacing, Layout, Shadows } from '@/theme';
 import { useOrbitor } from '@/context/OrbitorContext';
 import { Badge } from '@/components/common/Badge';
-import { ShareApkModal } from '@/components/modals/ShareApkModal';
-import { PlusComingSoonModal } from '@/components/modals/PlusComingSoonModal';
-import { GestureDetector } from 'react-native-gesture-handler';
-import { useSwipeNavigation } from '@/hooks/useSwipeNavigation';
+import { PermissionsManagerSheet } from '@/components/modals/PermissionsManagerSheet';
+import { ThemeSelectionSheet } from '@/components/modals/ThemeSelectionSheet';
 
 export default function SettingsScreen() {
   const theme = useOrbitorTheme();
+  const { themeMode, setThemeMode, isDark } = useThemeContext();
   const insets = useSafeAreaInsets();
   const { myProfile, updateUserProfile } = useOrbitor();
 
-  const [apkModalVisible, setApkModalVisible] = useState(false);
-  const [plusVisible, setPlusVisible] = useState(false);
+  const [permissionsModalVisible, setPermissionsModalVisible] = useState(false);
+  const [themeModalVisible, setThemeModalVisible] = useState(false);
+
+  // Editable identity state
+  const [isEditingIdentity, setIsEditingIdentity] = useState(false);
+  const [editDisplayName, setEditDisplayName] = useState(myProfile.displayName || '');
+  const [editDeviceName, setEditDeviceName] = useState(myProfile.deviceName || myProfile.deviceModel || '');
+
+  const handleStartEditing = () => {
+    setEditDisplayName(myProfile.displayName || '');
+    setEditDeviceName(myProfile.deviceName || myProfile.deviceModel || '');
+    setIsEditingIdentity(true);
+  };
+
+  const handleSaveIdentity = () => {
+    const trimmedName = editDisplayName.trim() || myProfile.displayName || 'Radii User';
+    const trimmedDevice = editDeviceName.trim() || myProfile.deviceName || 'Android Radio';
+    updateUserProfile({
+      displayName: trimmedName,
+      deviceName: trimmedDevice,
+    });
+    setIsEditingIdentity(false);
+  };
+
+  const handleCancelEditing = () => {
+    setEditDisplayName(myProfile.displayName || '');
+    setEditDeviceName(myProfile.deviceName || myProfile.deviceModel || '');
+    setIsEditingIdentity(false);
+  };
+
+  const shortId = (myProfile.id || '').slice(-6).toUpperCase();
 
   return (
     <SafeAreaView
@@ -37,178 +68,230 @@ export default function SettingsScreen() {
         <View style={styles.header}>
           <Text style={[styles.title, { color: theme.text }]}>Settings & Mesh</Text>
           <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-            Local cryptographic identity and radio diagnostics
+            Local offline identity, hardware radios, and diagnostics
           </Text>
         </View>
 
-        {/* Local Peer Identity Card */}
-        <View
-          style={[
-            styles.card,
-            {
-              backgroundColor: theme.surface,
-              borderColor: theme.border,
-            },
-          ]}>
-          <Text style={[styles.cardTitle, { color: theme.textSecondary }]}>
-            LOCAL IDENTITY (NO ACCOUNT NEEDED)
-          </Text>
-
-          <View style={styles.identityRow}>
-            <View
-              style={[
-                styles.identityAvatar,
-                { backgroundColor: theme.surfaceHighlight, borderColor: theme.border },
-              ]}>
-              <Text style={[styles.identityAvatarText, { color: theme.accentCyan }]}>◎</Text>
-            </View>
-            <View style={styles.identityDetails}>
-              <Text style={[styles.displayName, { color: theme.text }]}>
-                {myProfile.displayName}
-              </Text>
-              <Text style={[styles.deviceModel, { color: theme.textTertiary }]}>
-                {myProfile.deviceModel}
-              </Text>
-            </View>
-            <Badge label="OFFLINE IDENTITY" variant="cyan" size="sm" />
-          </View>
-
-          <View style={[styles.keyBox, { backgroundColor: theme.surfaceElevated }]}>
-            <Text style={[styles.keyLabel, { color: theme.textTertiary }]}>Ed25519 Public Key</Text>
-            <Text style={[styles.keyValue, { color: theme.textSecondary }]}>
-              {myProfile.publicKey}
+        {/* Local Peer Identity Card (Borderless, Material Elevation) */}
+        <View style={[styles.card, { backgroundColor: theme.surface }]}>
+          <View style={styles.cardHeaderRow}>
+            <Text style={[styles.cardTitle, { color: theme.accentCyan }]}>
+              OFFLINE IDENTITY
             </Text>
+            <Badge label={`ID · #${shortId}`} variant="cyan" size="sm" />
           </View>
+
+          {!isEditingIdentity ? (
+            <View style={styles.identityViewWrap}>
+              <View style={styles.identityRow}>
+                <View
+                  style={[
+                    styles.identityAvatar,
+                    { backgroundColor: theme.surfaceHighlight },
+                  ]}>
+                  <Text style={[styles.identityAvatarText, { color: theme.accentCyan }]}>
+                    {(myProfile.displayName || 'R').charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+                <View style={styles.identityDetails}>
+                  <Text style={[styles.displayName, { color: theme.text }]}>
+                    {myProfile.displayName}
+                  </Text>
+                  <Text style={[styles.deviceModel, { color: theme.textTertiary }]}>
+                    {myProfile.deviceName || myProfile.deviceModel}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={handleStartEditing}
+                  hitSlop={8}
+                  style={({ pressed }) => [
+                    styles.editIconBtn,
+                    { backgroundColor: theme.surfaceHighlight, opacity: pressed ? 0.75 : 1 },
+                  ]}>
+                  <Ionicons name="pencil" size={14} color={theme.text} />
+                  <Text style={[styles.editIconBtnText, { color: theme.text }]}>Edit</Text>
+                </Pressable>
+              </View>
+              <Text style={[styles.optionDesc, { color: theme.textSecondary }]}>
+                This name and device model are broadcast to nearby companions over Bluetooth & local Wi-Fi mesh. Zero accounts or internet required.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.identityEditWrap}>
+              <View style={styles.editFieldGroup}>
+                <Text style={[styles.fieldLabel, { color: theme.textSecondary }]}>Username / Display Name</Text>
+                <TextInput
+                  value={editDisplayName}
+                  onChangeText={setEditDisplayName}
+                  placeholder="Enter your name"
+                  placeholderTextColor={theme.textTertiary}
+                  style={[
+                    styles.editInput,
+                    { backgroundColor: theme.surfaceElevated, color: theme.text },
+                  ]}
+                />
+              </View>
+
+              <View style={styles.editFieldGroup}>
+                <Text style={[styles.fieldLabel, { color: theme.textSecondary }]}>Device Name</Text>
+                <TextInput
+                  value={editDeviceName}
+                  onChangeText={setEditDeviceName}
+                  placeholder="e.g. Motorola Edge, Pixel 8"
+                  placeholderTextColor={theme.textTertiary}
+                  style={[
+                    styles.editInput,
+                    { backgroundColor: theme.surfaceElevated, color: theme.text },
+                  ]}
+                />
+              </View>
+
+              <View style={styles.editActionRow}>
+                <Pressable
+                  onPress={handleCancelEditing}
+                  style={({ pressed }) => [
+                    styles.editCancelBtn,
+                    { backgroundColor: theme.surfaceHighlight, opacity: pressed ? 0.75 : 1 },
+                  ]}>
+                  <Text style={[styles.editCancelText, { color: theme.textSecondary }]}>Cancel</Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={handleSaveIdentity}
+                  style={({ pressed }) => [
+                    styles.editSaveBtn,
+                    { backgroundColor: theme.text, opacity: pressed ? 0.85 : 1 },
+                  ]}>
+                  <Text style={[styles.editSaveText, { color: theme.background }]}>Save Changes</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
         </View>
 
-        {/* Share Orbitor APK Button */}
+        {/* Appearance & Theme Setting Card (Click opens BottomSheet) */}
         <Pressable
-          onPress={() => setApkModalVisible(true)}
+          onPress={() => setThemeModalVisible(true)}
           style={({ pressed }) => [
             styles.card,
             {
               backgroundColor: theme.surface,
-              borderColor: theme.accentCyan,
               opacity: pressed ? 0.85 : 1,
             },
           ]}>
           <View style={styles.cardHeaderRow}>
             <Text style={[styles.cardTitle, { color: theme.accentCyan }]}>
-              OFFLINE APP DISTRIBUTION
+              APPEARANCE & THEME
             </Text>
-            <Badge label="ZERO DATA" variant="cyan" size="sm" />
+            <Badge
+              label={
+                themeMode === 'system'
+                  ? `AUTO (${isDark ? 'DARK' : 'LIGHT'})`
+                  : themeMode.toUpperCase()
+              }
+              variant="green"
+              size="sm"
+            />
           </View>
-          <Text style={[styles.optionTitle, { color: theme.text }]}>
-            Share Radii APK over Radio
-          </Text>
-          <Text style={[styles.optionDesc, { color: theme.textSecondary }]}>
-            Beam the standalone APK to nearby friends with no internet access. Receiver enables 'install unknown apps' once.
-          </Text>
+          <View style={styles.clickableRow}>
+            <View style={styles.clickableTextWrap}>
+              <Text style={[styles.optionTitle, { color: theme.text }]}>
+                {themeMode === 'dark'
+                  ? 'Dark Theme'
+                  : themeMode === 'light'
+                  ? 'Light Theme'
+                  : 'System Default'}
+              </Text>
+              <Text style={[styles.optionDesc, { color: theme.textSecondary }]}>
+                {themeMode === 'dark'
+                  ? 'OLED deep black solid surfaces, gentle on eyes in dim lighting'
+                  : themeMode === 'light'
+                  ? 'Apple solid white cards with soft subtle depth for daytime use'
+                  : 'Automatically matches your phone light / dark display setting'}
+              </Text>
+            </View>
+            <View style={[styles.chevronBox, { backgroundColor: theme.surfaceElevated }]}>
+              <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
+            </View>
+          </View>
         </Pressable>
 
-        {/* Radio Diagnostics */}
-        <View
-          style={[
+        {/* Hardware & System Permissions Card (Borderless) */}
+        <Pressable
+          onPress={() => setPermissionsModalVisible(true)}
+          style={({ pressed }) => [
             styles.card,
             {
               backgroundColor: theme.surface,
-              borderColor: theme.border,
+              opacity: pressed ? 0.85 : 1,
             },
           ]}>
-          <Text style={[styles.cardTitle, { color: theme.textSecondary }]}>
+          <View style={styles.cardHeaderRow}>
+            <Text style={[styles.cardTitle, { color: theme.accentCyan }]}>
+              DEVICE HARDWARE & ACCESS
+            </Text>
+            <Badge label="SYSTEM" variant="cyan" size="sm" />
+          </View>
+          <View style={styles.clickableRow}>
+            <View style={styles.clickableTextWrap}>
+              <Text style={[styles.optionTitle, { color: theme.text }]}>
+                Hardware & System Permissions
+              </Text>
+              <Text style={[styles.optionDesc, { color: theme.textSecondary }]}>
+                Manage Wi-Fi Direct mesh, Bluetooth radio, Push Notifications, Audio recording, and Downloads/Radii media storage access.
+              </Text>
+            </View>
+            <View style={[styles.chevronBox, { backgroundColor: theme.surfaceElevated }]}>
+              <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
+            </View>
+          </View>
+        </Pressable>
+
+        {/* Radio Diagnostics Card (Borderless) */}
+        <View style={[styles.card, { backgroundColor: theme.surface }]}>
+          <Text style={[styles.cardTitle, { color: theme.accentCyan }]}>
             RADIO STACK DIAGNOSTICS
           </Text>
 
           <View style={styles.diagnosticItem}>
             <View>
               <Text style={[styles.diagName, { color: theme.text }]}>BLE Peripheral Advertiser</Text>
-              <Text style={[styles.diagSub, { color: theme.textTertiary }]}>GATT Server + Beacon</Text>
+              <Text style={[styles.diagSub, { color: theme.textTertiary }]}>GATT Server + Zero-drop Beacon</Text>
             </View>
             <Badge label="ACTIVE" variant="green" size="sm" />
           </View>
 
           <View style={styles.diagnosticItem}>
             <View>
-              <Text style={[styles.diagName, { color: theme.text }]}>Google Nearby Connections</Text>
-              <Text style={[styles.diagSub, { color: theme.textTertiary }]}>High-speed Wi-Fi Direct</Text>
+              <Text style={[styles.diagName, { color: theme.text }]}>High-Speed Radio Mesh</Text>
+              <Text style={[styles.diagSub, { color: theme.textTertiary }]}>Wi-Fi Direct + UDP Subnet Mesh</Text>
             </View>
             <Badge label="ACTIVE" variant="green" size="sm" />
           </View>
 
           <View style={styles.diagnosticItem}>
             <View>
-              <Text style={[styles.diagName, { color: theme.text }]}>Campus LAN / mDNS Socket</Text>
-              <Text style={[styles.diagSub, { color: theme.textTertiary }]}>Hostel Wi-Fi zero-cloud</Text>
+              <Text style={[styles.diagName, { color: theme.text }]}>Local Antenna Socket</Text>
+              <Text style={[styles.diagSub, { color: theme.textTertiary }]}>Zero-cloud direct delivery</Text>
             </View>
             <Badge label="READY" variant="cyan" size="sm" />
           </View>
         </View>
 
-        {/* Visibility & Discovery Setting Card */}
+        {/* Internet Layer & Cloud Reach (Disabled - Coming Soon) */}
         <View
           style={[
             styles.card,
             {
               backgroundColor: theme.surface,
-              borderColor: theme.border,
-            },
-          ]}>
-          <Text style={[styles.cardTitle, { color: theme.textSecondary }]}>
-            DISCOVERY & VISIBILITY
-          </Text>
-          <Text style={[styles.optionDesc, { color: theme.textSecondary }]}>
-            Control who can discover your device on their radar circle over Bluetooth & Wi-Fi:
-          </Text>
-
-          <View style={styles.visibilityOptionsRow}>
-            {(['everyone', 'contacts', 'hidden'] as const).map((mode) => {
-              const isSelected = myProfile.visibility === mode;
-              const labels = {
-                everyone: 'Everyone Nearby',
-                contacts: 'Same Contacts',
-                hidden: 'Hidden',
-              };
-              return (
-                <Pressable
-                  key={mode}
-                  onPress={() => updateUserProfile({ visibility: mode })}
-                  style={({ pressed }) => [
-                    styles.visibilityBtn,
-                    {
-                      backgroundColor: isSelected ? theme.text : theme.surfaceElevated,
-                      borderColor: isSelected ? theme.text : theme.border,
-                      opacity: pressed ? 0.75 : 1,
-                    },
-                  ]}>
-                  <Text
-                    style={[
-                      styles.visibilityBtnText,
-                      { color: isSelected ? theme.background : theme.textSecondary },
-                    ]}>
-                    {labels[mode]}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-
-        {/* Orbitor Plus & Cloud Layer Coming Soon Preview */}
-        <Pressable
-          onPress={() => setPlusVisible(true)}
-          style={({ pressed }) => [
-            styles.card,
-            {
-              backgroundColor: theme.surfaceElevated,
-              borderColor: theme.plus,
-              opacity: pressed ? 0.85 : 1,
+              opacity: 0.7,
             },
           ]}>
           <View style={styles.cardHeaderRow}>
             <Text style={[styles.cardTitle, { color: theme.plus }]}>
-              RADII PLUS // COMING SOON
+              INTERNET LAYER & CLOUD REACH
             </Text>
-            <Badge label="₹99 / MO" variant="purple" size="sm" />
+            <Badge label="COMING SOON" variant="purple" size="sm" />
           </View>
           <Text style={[styles.optionTitle, { color: theme.text }]}>
             Internet Layer & Cloud Reach
@@ -216,10 +299,7 @@ export default function SettingsScreen() {
           <Text style={[styles.optionDesc, { color: theme.textSecondary }]}>
             Reach paired friends over the internet when they are far away. Encrypted backup, 2 GB Cloud Drop, and larger rooms.
           </Text>
-          <Text style={[styles.learnMoreLink, { color: theme.plus }]}>
-            View full roadmap details ↗
-          </Text>
-        </Pressable>
+        </View>
 
         {/* Zero-Internet Guarantee Statement */}
         <View style={styles.privacyNote}>
@@ -232,17 +312,16 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
 
-      {/* Share APK Modal */}
-      <ShareApkModal
-        visible={apkModalVisible}
-        onClose={() => setApkModalVisible(false)}
-        onStartApkFling={() => {}}
+      {/* Hardware & System Permissions Modal */}
+      <PermissionsManagerSheet
+        visible={permissionsModalVisible}
+        onClose={() => setPermissionsModalVisible(false)}
       />
 
-      {/* Plus Coming Soon Modal */}
-      <PlusComingSoonModal
-        visible={plusVisible}
-        onClose={() => setPlusVisible(false)}
+      {/* Appearance Theme Selection Modal */}
+      <ThemeSelectionSheet
+        visible={themeModalVisible}
+        onClose={() => setThemeModalVisible(false)}
       />
     </SafeAreaView>
   );
@@ -262,6 +341,7 @@ const styles = StyleSheet.create({
   },
   header: {
     gap: 2,
+    marginBottom: Spacing.xs,
   },
   title: {
     fontSize: Typography.sizes.xl,
@@ -273,10 +353,11 @@ const styles = StyleSheet.create({
     fontFamily: Typography.fontFamily,
   },
   card: {
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    padding: Spacing.md,
+    borderRadius: Radius.xl,
+    borderWidth: 0,
+    padding: Spacing.md + 2,
     gap: Spacing.sm,
+    ...Shadows.subtle,
   },
   cardTitle: {
     fontSize: Typography.sizes.xs - 1,
@@ -289,6 +370,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  identityViewWrap: {
+    gap: Spacing.sm,
+  },
   identityRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -298,12 +382,11 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: Radius.full,
-    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   identityAvatarText: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '800',
   },
   identityDetails: {
@@ -311,7 +394,7 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   displayName: {
-    fontSize: Typography.sizes.sm + 1,
+    fontSize: Typography.sizes.base,
     fontWeight: Typography.weights.semibold,
     fontFamily: Typography.fontFamily,
   },
@@ -319,18 +402,64 @@ const styles = StyleSheet.create({
     fontSize: Typography.sizes.xs,
     fontFamily: Typography.fontFamily,
   },
-  keyBox: {
-    padding: Spacing.sm,
-    borderRadius: Radius.sm,
-    gap: 2,
+  editIconBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.xs + 2,
+    paddingHorizontal: Spacing.sm + 2,
+    borderRadius: Radius.full,
+    gap: 4,
   },
-  keyLabel: {
-    fontSize: Typography.sizes.xs - 2,
-    fontFamily: Typography.monoFamily,
+  editIconBtnText: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.semibold,
+    fontFamily: Typography.fontFamily,
   },
-  keyValue: {
-    fontSize: Typography.sizes.xs - 1,
-    fontFamily: Typography.monoFamily,
+  identityEditWrap: {
+    gap: Spacing.sm + 2,
+    marginTop: Spacing.xs,
+  },
+  editFieldGroup: {
+    gap: 4,
+  },
+  fieldLabel: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.medium,
+    fontFamily: Typography.fontFamily,
+  },
+  editInput: {
+    width: '100%',
+    paddingVertical: Spacing.sm + 2,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.md,
+    fontSize: Typography.sizes.sm,
+    fontFamily: Typography.fontFamily,
+  },
+  editActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: Spacing.sm,
+    marginTop: Spacing.xs,
+  },
+  editCancelBtn: {
+    paddingVertical: Spacing.xs + 4,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.lg,
+  },
+  editCancelText: {
+    fontSize: Typography.sizes.xs + 1,
+    fontFamily: Typography.fontFamily,
+  },
+  editSaveBtn: {
+    paddingVertical: Spacing.xs + 4,
+    paddingHorizontal: Spacing.md + 4,
+    borderRadius: Radius.lg,
+  },
+  editSaveText: {
+    fontSize: Typography.sizes.xs + 1,
+    fontWeight: Typography.weights.bold,
+    fontFamily: Typography.fontFamily,
   },
   optionTitle: {
     fontSize: Typography.sizes.base,
@@ -342,19 +471,11 @@ const styles = StyleSheet.create({
     fontFamily: Typography.fontFamily,
     lineHeight: 18,
   },
-  learnMoreLink: {
-    fontSize: Typography.sizes.xs,
-    fontWeight: Typography.weights.semibold,
-    fontFamily: Typography.fontFamily,
-    marginTop: 2,
-  },
   diagnosticItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: Spacing.xs,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(255,255,255,0.06)',
+    paddingVertical: Spacing.xs + 2,
   },
   diagName: {
     fontSize: Typography.sizes.sm,
@@ -363,25 +484,6 @@ const styles = StyleSheet.create({
   diagSub: {
     fontSize: Typography.sizes.xs - 1,
     fontFamily: Typography.fontFamily,
-  },
-  visibilityOptionsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs + 2,
-    marginTop: 4,
-  },
-  visibilityBtn: {
-    flex: 1,
-    paddingVertical: Spacing.xs + 2,
-    borderRadius: Radius.full,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  visibilityBtnText: {
-    fontSize: Typography.sizes.xs - 1,
-    fontFamily: Typography.fontFamily,
-    fontWeight: Typography.weights.medium,
   },
   privacyNote: {
     padding: Spacing.sm,
@@ -398,5 +500,21 @@ const styles = StyleSheet.create({
     fontSize: Typography.sizes.xs,
     fontFamily: Typography.fontFamily,
     lineHeight: 18,
+  },
+  clickableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  clickableTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  chevronBox: {
+    width: 32,
+    height: 32,
+    borderRadius: Radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

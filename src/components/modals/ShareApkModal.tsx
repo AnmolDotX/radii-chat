@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, Modal, Pressable } from 'react-native';
-import { useOrbitorTheme, Typography, Radius, Spacing } from '../../theme';
+import { useOrbitorTheme, Typography, Radius, Spacing, Shadows } from '../../theme';
 import { Badge } from '../common/Badge';
 
 interface ShareApkModalProps {
@@ -47,7 +47,6 @@ export const ShareApkModal: React.FC<ShareApkModalProps> = ({
             styles.sheet,
             {
               backgroundColor: theme.surface,
-              borderColor: theme.border,
             },
           ]}>
           <View style={styles.header}>
@@ -60,7 +59,7 @@ export const ShareApkModal: React.FC<ShareApkModalProps> = ({
             </Text>
           </View>
 
-          <View style={[styles.infoBox, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}>
+          <View style={[styles.infoBox, { backgroundColor: theme.surfaceElevated }]}>
             <View style={styles.infoRow}>
               <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>Package</Text>
               <Text style={[styles.infoVal, { color: theme.text }]}>radii-app-release.apk</Text>
@@ -115,7 +114,6 @@ export const ShareApkModal: React.FC<ShareApkModalProps> = ({
               styles.dismissButton,
               {
                 backgroundColor: theme.surfaceElevated,
-                borderColor: theme.border,
                 opacity: pressed || isSending ? 0.5 : 1,
               },
             ]}>
@@ -139,7 +137,8 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 400,
     borderRadius: Radius.xl,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.elevated,
     padding: Spacing.xl,
     gap: Spacing.base,
   },
@@ -172,7 +171,8 @@ const styles = StyleSheet.create({
   },
   infoBox: {
     borderRadius: Radius.md,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     padding: Spacing.md,
     gap: Spacing.xs + 2,
   },
@@ -220,6 +220,8 @@ const styles = StyleSheet.create({
   sendButton: {
     paddingVertical: Spacing.md,
     borderRadius: Radius.lg,
+    borderWidth: 0,
+    ...Shadows.subtle,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -231,7 +233,8 @@ const styles = StyleSheet.create({
   dismissButton: {
     paddingVertical: Spacing.md,
     borderRadius: Radius.lg,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     alignItems: 'center',
     justifyContent: 'center',
   },

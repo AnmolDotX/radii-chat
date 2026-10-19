@@ -18,12 +18,16 @@ export default function AppTabs() {
         headerShown: false,
         tabBarStyle: {
           backgroundColor: theme.surface,
-          borderTopColor: theme.border,
-          borderTopWidth: 1,
+          borderTopWidth: 0,
+          borderTopColor: 'transparent',
           height: barHeight,
           paddingBottom: bottomInset,
           paddingTop: 8,
-          elevation: 12,
+          elevation: 8,
+          shadowColor: '#000000',
+          shadowOffset: { width: 0, height: -2 },
+          shadowOpacity: 0.06,
+          shadowRadius: 10,
         },
         tabBarItemStyle: {
           overflow: 'hidden',
@@ -53,15 +57,6 @@ export default function AppTabs() {
           title: 'Mesh Chats',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="chatbubble-ellipses-outline" size={size || 22} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="fling"
-        options={{
-          title: 'File Fling',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="swap-vertical-outline" size={size || 22} color={color} />
           ),
         }}
       />

@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
-import { useOrbitorTheme, Typography, Radius, Spacing } from '../../theme';
+import { useOrbitorTheme, Typography, Radius, Spacing, Shadows } from '../../theme';
 import { OutboxItem } from '../../core/types';
 
 interface OutboxNoticeProps {
@@ -22,7 +22,6 @@ export const OutboxNotice: React.FC<OutboxNoticeProps> = ({
         styles.container,
         {
           backgroundColor: theme.surfaceElevated,
-          borderColor: theme.border,
         },
       ]}>
       <View style={styles.content}>
@@ -44,7 +43,6 @@ export const OutboxNotice: React.FC<OutboxNoticeProps> = ({
             styles.plusButton,
             {
               backgroundColor: theme.plusMuted,
-              borderColor: theme.plus,
               opacity: pressed ? 0.75 : 1,
             },
           ]}>
@@ -61,7 +59,8 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.md,
     padding: Spacing.md,
     borderRadius: Radius.md,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -95,7 +94,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.xs + 2,
     paddingHorizontal: Spacing.sm + 2,
     borderRadius: Radius.full,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 0,
   },
   plusButtonText: {
     fontSize: Typography.sizes.xs,

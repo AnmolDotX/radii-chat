@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
-import { useOrbitorTheme, Typography, Radius, Spacing } from '../../theme';
+import { useOrbitorTheme, Typography, Radius, Spacing, Shadows } from '../../theme';
 import { NetworkMode } from '../../core/types';
 
 interface RadioPillBarProps {
@@ -28,7 +28,6 @@ export const RadioPillBar: React.FC<RadioPillBarProps> = ({
         styles.pillContainer,
         {
           backgroundColor: theme.surface,
-          borderColor: theme.border,
           opacity: pressed ? 0.8 : 1,
         },
       ]}>
@@ -41,7 +40,7 @@ export const RadioPillBar: React.FC<RadioPillBarProps> = ({
       <Text style={[styles.statusText, { color: theme.text }]}>
         {isOffline ? 'Offline Connection' : 'Online Connection'}
       </Text>
-      <Text style={[styles.divider, { color: theme.border }]}>·</Text>
+      <Text style={[styles.divider, { color: theme.divider }]}>·</Text>
       <Text style={[styles.subText, { color: theme.textSecondary }]}>
         {isOffline ? 'Bluetooth & Nearby' : 'Location Proximity'}
       </Text>
@@ -62,7 +61,8 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.xs + 3,
     paddingHorizontal: Spacing.md,
     borderRadius: Radius.full,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     gap: Spacing.xs + 2,
     marginVertical: Spacing.xs,
   },

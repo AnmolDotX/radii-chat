@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Modal, Pressable, Platform, PermissionsAndroid, ActivityIndicator, Linking } from 'react-native';
-import { useOrbitorTheme, Typography, Radius, Spacing } from '../../theme';
+import { useOrbitorTheme, Typography, Radius, Spacing, Shadows } from '../../theme';
 import { Badge } from '../common/Badge';
 
 import { requestRadioAndNearbyPermissions, checkRadioPermissions } from '../../utils/permissions';
@@ -72,7 +72,6 @@ export const RadioPermissionModal: React.FC<RadioPermissionModalProps> = ({
             styles.sheet,
             {
               backgroundColor: theme.surface,
-              borderColor: theme.border,
             },
           ]}>
           <View style={styles.header}>
@@ -101,7 +100,6 @@ export const RadioPermissionModal: React.FC<RadioPermissionModalProps> = ({
                   styles.item,
                   {
                     backgroundColor: theme.surfaceElevated,
-                    borderColor: theme.border,
                   },
                 ]}>
                 <View style={styles.itemHeader}>
@@ -121,7 +119,6 @@ export const RadioPermissionModal: React.FC<RadioPermissionModalProps> = ({
                 styles.cancelButton,
                 {
                   backgroundColor: theme.surfaceElevated,
-                  borderColor: theme.border,
                   opacity: pressed || isRequesting ? 0.75 : 1,
                 },
               ]}>
@@ -165,7 +162,8 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 400,
     borderRadius: Radius.xl,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.elevated,
     padding: Spacing.lg,
     gap: Spacing.md,
   },
@@ -191,7 +189,8 @@ const styles = StyleSheet.create({
   },
   item: {
     borderRadius: Radius.md,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     padding: Spacing.sm + 2,
     gap: 3,
   },
@@ -219,7 +218,8 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: Spacing.sm + 2,
     borderRadius: Radius.lg,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -231,6 +231,8 @@ const styles = StyleSheet.create({
     flex: 2,
     paddingVertical: Spacing.sm + 2,
     borderRadius: Radius.lg,
+    borderWidth: 0,
+    ...Shadows.subtle,
     alignItems: 'center',
     justifyContent: 'center',
   },

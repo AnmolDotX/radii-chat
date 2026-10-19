@@ -10,7 +10,7 @@ import {
   PermissionsAndroid,
   ActivityIndicator,
 } from 'react-native';
-import { useOrbitorTheme, Typography, Radius, Spacing } from '../../theme';
+import { useOrbitorTheme, Typography, Radius, Spacing, Shadows } from '../../theme';
 import { UserProfile } from '../../core/types';
 import { Badge } from '../common/Badge';
 
@@ -78,7 +78,6 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
             styles.sheet,
             {
               backgroundColor: theme.surface,
-              borderColor: theme.border,
             },
           ]}>
           {/* Stepper Progress Indicator */}
@@ -121,7 +120,7 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
               </View>
 
               <View style={styles.permCardsList}>
-                <View style={[styles.permCard, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}>
+                <View style={[styles.permCard, { backgroundColor: theme.surfaceElevated }]}>
                   <View style={styles.permIconBadge}>
                     <Text style={styles.permEmoji}>📡</Text>
                   </View>
@@ -133,7 +132,7 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                   </View>
                 </View>
 
-                <View style={[styles.permCard, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}>
+                <View style={[styles.permCard, { backgroundColor: theme.surfaceElevated }]}>
                   <View style={styles.permIconBadge}>
                     <Text style={styles.permEmoji}>⚡</Text>
                   </View>
@@ -145,7 +144,7 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                   </View>
                 </View>
 
-                <View style={[styles.permCard, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}>
+                <View style={[styles.permCard, { backgroundColor: theme.surfaceElevated }]}>
                   <View style={styles.permIconBadge}>
                     <Text style={styles.permEmoji}>📍</Text>
                   </View>
@@ -199,7 +198,6 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                     styles.textInput,
                     {
                       backgroundColor: theme.surfaceElevated,
-                      borderColor: theme.border,
                       color: theme.text,
                     },
                   ]}
@@ -221,7 +219,6 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                         styles.visibilityOption,
                         {
                           backgroundColor: isSelected ? theme.surfaceHighlight : theme.surfaceElevated,
-                          borderColor: isSelected ? theme.success : theme.border,
                           opacity: pressed ? 0.8 : 1,
                         },
                       ]}>
@@ -279,7 +276,8 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 420,
     borderRadius: Radius.xl,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.elevated,
     padding: Spacing.lg,
     gap: Spacing.md,
   },
@@ -342,7 +340,8 @@ const styles = StyleSheet.create({
     gap: Spacing.md,
     padding: Spacing.md,
     borderRadius: Radius.md,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
   },
   permIconBadge: {
     width: 38,
@@ -382,7 +381,8 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm + 2,
     paddingHorizontal: Spacing.md,
     borderRadius: Radius.md,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     fontSize: Typography.sizes.sm + 1,
     fontFamily: Typography.fontFamily,
   },
@@ -395,7 +395,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: Spacing.sm + 2,
     borderRadius: Radius.md,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     gap: Spacing.sm,
   },
   visibilityTextWrap: {
@@ -414,6 +415,8 @@ const styles = StyleSheet.create({
   primaryButton: {
     paddingVertical: Spacing.md,
     borderRadius: Radius.lg,
+    borderWidth: 0,
+    ...Shadows.subtle,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: Spacing.xs,

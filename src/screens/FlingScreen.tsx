@@ -7,7 +7,7 @@ import {
   Pressable,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useOrbitorTheme, Typography, Radius, Spacing, Layout } from '@/theme';
+import { useOrbitorTheme, Typography, Radius, Spacing, Layout, Shadows } from '@/theme';
 import { useOrbitor } from '@/context/OrbitorContext';
 import { useLocalSearchParams } from 'expo-router';
 import { PeerAvatar } from '@/components/common/PeerAvatar';
@@ -49,7 +49,6 @@ export default function FlingScreen() {
             styles.apkCard,
             {
               backgroundColor: theme.surface,
-              borderColor: theme.border,
               opacity: pressed ? 0.85 : 1,
             },
           ]}>
@@ -77,7 +76,6 @@ export default function FlingScreen() {
                   styles.transferCard,
                   {
                     backgroundColor: theme.surface,
-                    borderColor: theme.border,
                   },
                 ]}>
                 <View style={styles.transferHeader}>
@@ -129,7 +127,6 @@ export default function FlingScreen() {
                     styles.peerFlingCard,
                     {
                       backgroundColor: theme.surface,
-                      borderColor: theme.border,
                       opacity: pressed ? 0.8 : 1,
                     },
                   ]}>
@@ -186,7 +183,8 @@ const styles = StyleSheet.create({
   apkCard: {
     padding: Spacing.md,
     borderRadius: Radius.lg,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
   },
   apkTextWrap: {
     gap: 4,
@@ -219,7 +217,8 @@ const styles = StyleSheet.create({
   transferCard: {
     padding: Spacing.md,
     borderRadius: Radius.lg,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     gap: Spacing.xs + 2,
   },
   transferHeader: {
@@ -268,7 +267,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: Spacing.md,
     borderRadius: Radius.lg,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     gap: Spacing.sm + 2,
   },
   peerInfo: {

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, Modal, Pressable } from 'react-native';
-import { useOrbitorTheme, Typography, Radius, Spacing } from '../../theme';
+import { useOrbitorTheme, Typography, Radius, Spacing, Shadows } from '../../theme';
 import { Badge } from '../common/Badge';
 
 interface SOSModalProps {
@@ -37,7 +37,6 @@ export const SOSModal: React.FC<SOSModalProps> = ({
             styles.sheet,
             {
               backgroundColor: theme.surface,
-              borderColor: theme.danger,
             },
           ]}>
           <View style={styles.header}>
@@ -63,8 +62,7 @@ export const SOSModal: React.FC<SOSModalProps> = ({
                   style={({ pressed }) => [
                     styles.radioItem,
                     {
-                      backgroundColor: isSelected ? theme.surfaceHighlight : theme.surfaceElevated,
-                      borderColor: isSelected ? theme.danger : theme.border,
+                      backgroundColor: isSelected ? theme.dangerMuted : theme.surfaceElevated,
                       opacity: pressed ? 0.8 : 1,
                     },
                   ]}>
@@ -72,7 +70,7 @@ export const SOSModal: React.FC<SOSModalProps> = ({
                     style={[
                       styles.radioLabel,
                       {
-                        color: isSelected ? theme.text : theme.textSecondary,
+                        color: isSelected ? theme.danger : theme.textSecondary,
                         fontWeight: isSelected
                           ? Typography.weights.semibold
                           : Typography.weights.regular,
@@ -93,7 +91,6 @@ export const SOSModal: React.FC<SOSModalProps> = ({
                 styles.cancelButton,
                 {
                   backgroundColor: theme.surfaceElevated,
-                  borderColor: theme.border,
                   opacity: pressed ? 0.8 : 1,
                 },
               ]}>
@@ -132,7 +129,8 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 420,
     borderRadius: Radius.xl,
-    borderWidth: 1.5,
+    borderWidth: 0,
+    ...Shadows.elevated,
     padding: Spacing.xl,
     gap: Spacing.lg,
   },
@@ -180,7 +178,8 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm + 3,
     paddingHorizontal: Spacing.md,
     borderRadius: Radius.md,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
   },
   radioLabel: {
     fontSize: Typography.sizes.sm,
@@ -195,7 +194,8 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: Spacing.md,
     borderRadius: Radius.lg,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -203,6 +203,8 @@ const styles = StyleSheet.create({
     flex: 2,
     paddingVertical: Spacing.md,
     borderRadius: Radius.lg,
+    borderWidth: 0,
+    ...Shadows.subtle,
     alignItems: 'center',
     justifyContent: 'center',
   },

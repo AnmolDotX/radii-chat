@@ -9,6 +9,7 @@ const radioEmitter = RadiiNativeRadio ? new NativeEventEmitter(RadiiNativeRadio)
 export function normalizePeerId(id: string): string {
   if (!id) return '';
   const clean = id.trim();
+  if (clean.startsWith('room_')) return clean;
   if (clean.startsWith('peer_') && clean.length === 11) return clean;
   const shortId = clean.slice(-6).toLowerCase();
   return `peer_${shortId}`;
@@ -85,7 +86,13 @@ export class NativeRadioTransport implements ITransport {
         if (rawPeer.macAddress) transports.add('ble');
         if (transports.size === 0) transports.add('ble');
 
-        const isNearbyAvailable = Boolean(rawPeer.ipAddress || existing?.ipAddress);
+        const isNearbyAvailable = Boolean(
+          rawPeer.ipAddress ||
+          existing?.ipAddress ||
+          rawPeer.activeTransport === 'nearby' ||
+          existing?.activeTransport === 'nearby' ||
+          existing?.isPaired
+        );
 
         const mergedPeer: Peer = {
           id: canonicalId,
@@ -96,7 +103,7 @@ export class NativeRadioTransport implements ITransport {
               ? rawPeer.name
               : existing?.name || rawPeer.name || `Radii·${shortId}`,
           platform: (rawPeer.platform as any) || 'android',
-          activeTransport: isNearbyAvailable ? 'nearby' : 'ble',
+          activeTransport: isNearbyAvailable ? 'nearby' : (rawPeer.activeTransport as any) || 'ble',
           availableTransports: Array.from(transports),
           rssi: typeof rawPeer.rssi === 'number' ? rawPeer.rssi : existing?.rssi || -60,
           distanceBracket: rawPeer.distanceBracket || existing?.distanceBracket || 'near',
@@ -109,7 +116,7 @@ export class NativeRadioTransport implements ITransport {
             rawPeer.deviceName !== 'Android Radio'
               ? rawPeer.deviceName
               : existing?.deviceName || rawPeer.deviceName || 'Android Radio',
-          statusMessage: isNearbyAvailable ? 'Direct Wi-Fi Mesh' : 'Direct BLE Radio Signal',
+          statusMessage: isNearbyAvailable ? 'Direct Nearby Mesh' : 'Direct BLE Radio Signal',
           macAddress: rawPeer.macAddress || existing?.macAddress,
           ipAddress: rawPeer.ipAddress || existing?.ipAddress,
         };
@@ -136,17 +143,25 @@ export class NativeRadioTransport implements ITransport {
           return;
         }
 
-        // Target verification
-        if (targetShortId && myShortId && targetShortId !== myShortId) {
+        const isBroadcastOrRoom =
+          Boolean(rawMsg.roomId || rawMsg.roomCode) ||
+          String(rawMsg.type || '').startsWith('ROOM_') ||
+          rawMsg.type === 'PEER_ANNOUNCE' ||
+          rawMsg.type === 'SOS_BEACON';
+
+        // Target verification (skip for broadcast / rooms)
+        if (!isBroadcastOrRoom && targetShortId && myShortId && targetShortId !== myShortId) {
           return;
         }
 
-        const canonicalSenderId = senderShortId ? `peer_${senderShortId}` : String(rawMsg.senderId);
+        const canonicalSenderId = senderShortId ? `peer_${senderShortId}` : String(rawMsg.senderId || 'peer_unknown');
         const canonicalTargetId = targetShortId ? `peer_${targetShortId}` : String(rawMsg.targetPeerId || '');
+        const targetConvoId = rawMsg.roomId ? String(rawMsg.roomId) : canonicalSenderId;
 
         const msg: Message = {
+          ...rawMsg,
           id: String(rawMsg.id || `msg_${Date.now()}`),
-          conversationId: canonicalSenderId,
+          conversationId: targetConvoId,
           senderId: canonicalSenderId,
           senderName: String(rawMsg.senderName || 'Nearby Companion'),
           text: String(rawMsg.text || ''),
@@ -159,6 +174,29 @@ export class NativeRadioTransport implements ITransport {
           ackMessageId: rawMsg.ackMessageId,
           verificationCode: rawMsg.verificationCode,
           senderDevice: rawMsg.senderDevice,
+          // Explicitly preserve room and media transfer payload fields
+          roomId: rawMsg.roomId,
+          roomCode: rawMsg.roomCode,
+          roomName: rawMsg.roomName,
+          isVoice: Boolean(rawMsg.isVoice || rawMsg.transferType === 'voice'),
+          audioDurationSeconds: rawMsg.audioDurationSeconds,
+          isImage: Boolean(rawMsg.isImage || rawMsg.transferType === 'image'),
+          transferId: rawMsg.transferId,
+          transferType: rawMsg.transferType,
+          transferStatus: rawMsg.transferStatus,
+          transferProgress: rawMsg.transferProgress,
+          fileName: rawMsg.fileName,
+          fileSizeBytes: rawMsg.fileSizeBytes,
+          chunkIndex: rawMsg.chunkIndex,
+          totalChunks: rawMsg.totalChunks,
+          chunkData: rawMsg.chunkData,
+          mimeType: rawMsg.mimeType,
+          mediaType: rawMsg.mediaType,
+          audioUri: rawMsg.audioUri,
+          imageUri: rawMsg.imageUri,
+          isFile: Boolean(rawMsg.isFile || rawMsg.transferType === 'file'),
+          fileUri: rawMsg.fileUri,
+          missingIndices: rawMsg.missingIndices,
         };
 
         this.messageListeners.forEach((cb) => cb(msg));
@@ -263,12 +301,41 @@ export class NativeRadioTransport implements ITransport {
   }
 
   public async sendPacket(peerId: string, packet: any): Promise<boolean> {
-    const peer = this.findPeer(peerId);
     const jsonString = typeof packet === 'string' ? packet : JSON.stringify(packet);
-    let delivered = false;
+    const isRoomOrBroadcast =
+      peerId === 'broadcast' ||
+      Boolean(packet?.roomId || packet?.roomCode || packet?.type?.startsWith('ROOM_'));
 
     if (Platform.OS === 'android') {
-      // 1. Direct UDP Unicast (if IP address known)
+      // 1. Broadcast to ALL discovered peers & subnet
+      if (peerId === 'broadcast') {
+        if (RadiiNativeRadio?.broadcastUdpMessage) {
+          try {
+            RadiiNativeRadio.broadcastUdpMessage(jsonString);
+          } catch (e) {}
+        }
+
+        const peers = Array.from(this.discoveredPeers.values());
+        peers.forEach((p) => {
+          if (p.ipAddress && RadiiNativeRadio?.sendUdpMessage) {
+            RadiiNativeRadio.sendUdpMessage(p.ipAddress, jsonString).catch(() => {});
+          }
+          if (p.macAddress) {
+            if (jsonString.length <= 500 && RadiiNativeRadio?.sendBleMessage) {
+              RadiiNativeRadio.sendBleMessage(p.macAddress, jsonString).catch(() => {});
+            }
+            if (RadiiNativeRadio?.sendBluetoothMessage) {
+              RadiiNativeRadio.sendBluetoothMessage(p.macAddress, jsonString).catch(() => {});
+            }
+          }
+        });
+        return true;
+      }
+
+      const peer = this.findPeer(peerId);
+      let delivered = false;
+
+      // 2. Direct UDP Unicast (if peer IP address known on local Wi-Fi / Hotspot)
       if (peer?.ipAddress && RadiiNativeRadio?.sendUdpMessage) {
         try {
           const ok = await RadiiNativeRadio.sendUdpMessage(peer.ipAddress, jsonString);
@@ -276,34 +343,48 @@ export class NativeRadioTransport implements ITransport {
         } catch (e) {}
       }
 
-      // 2. Subnet Broadcast on Local Wi-Fi / Hotspot
-      if (RadiiNativeRadio?.broadcastUdpMessage) {
+      // 3. Subnet Broadcast on Local Wi-Fi / Hotspot for rooms
+      if (isRoomOrBroadcast && RadiiNativeRadio?.broadcastUdpMessage) {
         try {
-          const ok = await RadiiNativeRadio.broadcastUdpMessage(jsonString);
+          RadiiNativeRadio.broadcastUdpMessage(jsonString);
+        } catch (e) {}
+      }
+
+      // 4. For room control packets <= 500 bytes: prioritize BLE GATT immediately
+      if (isRoomOrBroadcast && peer?.macAddress && jsonString.length <= 500 && RadiiNativeRadio?.sendBleMessage) {
+        try {
+          const ok = await RadiiNativeRadio.sendBleMessage(peer.macAddress, jsonString);
           if (ok) delivered = true;
         } catch (e) {}
       }
 
-      // 3. BLE GATT / RFCOMM (if MAC address known)
-      if (peer?.macAddress) {
-        if (RadiiNativeRadio?.sendBleMessage) {
-          try {
-            const ok = await RadiiNativeRadio.sendBleMessage(peer.macAddress, jsonString);
-            if (ok) delivered = true;
-          } catch (e) {}
-        }
-        if (RadiiNativeRadio?.sendBluetoothMessage) {
-          try {
-            RadiiNativeRadio.sendBluetoothMessage(peer.macAddress, jsonString);
-          } catch (e) {}
-        }
+      // 5. High-Bandwidth RFCOMM Stream (Bluetooth Classic)
+      if (peer?.macAddress && RadiiNativeRadio?.sendBluetoothMessage) {
+        try {
+          const ok = await RadiiNativeRadio.sendBluetoothMessage(peer.macAddress, jsonString);
+          if (ok) delivered = true;
+        } catch (e) {}
       }
+
+      // 6. Fallback BLE GATT if RFCOMM was not delivered
+      if (!delivered && peer?.macAddress && jsonString.length <= 500 && RadiiNativeRadio?.sendBleMessage) {
+        try {
+          const ok = await RadiiNativeRadio.sendBleMessage(peer.macAddress, jsonString);
+          if (ok) delivered = true;
+        } catch (e) {}
+      }
+
+      return delivered;
     }
-    return delivered;
+    return false;
   }
 
   public async sendVoiceChunk(_peerId: string, _audioBase64: string, _durationSec: number): Promise<boolean> {
     return true;
+  }
+
+  public async disconnectPeer(peerIdOrMac: string): Promise<boolean> {
+    return disconnectRadioPeer(peerIdOrMac);
   }
 
   public onPeerDiscovered(callback: (peer: Peer) => void): () => void {
@@ -322,6 +403,12 @@ export class NativeRadioTransport implements ITransport {
     return () => this.messageListeners.delete(callback);
   }
 
+  public showNotification(title: string, body: string, peerId: string): void {
+    if (RadiiNativeRadio && typeof RadiiNativeRadio.showNotification === 'function') {
+      RadiiNativeRadio.showNotification(title, body, peerId);
+    }
+  }
+
   public destroy(): void {
     if (this.peerSubscription) {
       this.peerSubscription.remove();
@@ -333,4 +420,203 @@ export class NativeRadioTransport implements ITransport {
       clearInterval(this.pruneTimer);
     }
   }
+}
+
+export async function disconnectRadioPeer(peerIdOrMac: string): Promise<boolean> {
+  if (!RadiiNativeRadio || typeof RadiiNativeRadio.disconnectPeer !== 'function') return false;
+  try {
+    return await RadiiNativeRadio.disconnectPeer(peerIdOrMac);
+  } catch {
+    return false;
+  }
+}
+
+export function showLocalNotification(title: string, body: string, peerId: string): void {
+  if (RadiiNativeRadio && typeof RadiiNativeRadio.showNotification === 'function') {
+    RadiiNativeRadio.showNotification(title, body, peerId);
+  }
+}
+
+export async function readMediaBase64(filePath: string): Promise<{ base64: string; sizeBytes: number } | null> {
+  if (Platform.OS === 'android' && RadiiNativeRadio?.readFileBase64) {
+    try {
+      return await RadiiNativeRadio.readFileBase64(filePath);
+    } catch (e) {
+      console.warn('readMediaBase64 error:', e);
+      return null;
+    }
+  }
+  return null;
+}
+
+export async function saveMediaBase64(fileName: string, base64: string, mimeType: string): Promise<string | null> {
+  if (Platform.OS === 'android' && RadiiNativeRadio?.saveMediaBase64) {
+    try {
+      return await RadiiNativeRadio.saveMediaBase64(fileName, base64, mimeType);
+    } catch (e) {
+      console.warn('saveMediaBase64 error:', e);
+      return null;
+    }
+  }
+  return null;
+}
+
+export interface PickedDocument {
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  base64: string;
+  uri: string;
+}
+
+export async function pickNativeDocument(): Promise<PickedDocument | null> {
+  if (Platform.OS === 'android' && RadiiNativeRadio?.pickDocument) {
+    try {
+      return await RadiiNativeRadio.pickDocument();
+    } catch (e) {
+      console.warn('pickNativeDocument error:', e);
+      return null;
+    }
+  }
+  return null;
+}
+
+export function inferMimeType(filePath: string): string {
+  const ext = (filePath.split('.').pop() || '').toLowerCase().split('?')[0];
+  const mimeMap: Record<string, string> = {
+    pdf: 'application/pdf',
+    doc: 'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls: 'application/vnd.ms-excel',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ppt: 'application/vnd.ms-powerpoint',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    txt: 'text/plain',
+    csv: 'text/csv',
+    apk: 'application/vnd.android.package-archive',
+    zip: 'application/zip',
+    rar: 'application/x-rar-compressed',
+    tar: 'application/x-tar',
+    gz: 'application/gzip',
+    mp3: 'audio/mpeg',
+    m4a: 'audio/mp4',
+    wav: 'audio/wav',
+    aac: 'audio/aac',
+    ogg: 'audio/ogg',
+    mp4: 'video/mp4',
+    mkv: 'video/x-matroska',
+    mov: 'video/quicktime',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    gif: 'image/gif',
+  };
+  return mimeMap[ext] || '*/*';
+}
+
+export async function openFileWithNativeIntent(filePathOrUri: string, mimeType?: string): Promise<boolean> {
+  const effectiveMime = (!mimeType || mimeType === '*/*' || mimeType === 'application/octet-stream')
+    ? inferMimeType(filePathOrUri)
+    : mimeType;
+  if (Platform.OS === 'android' && RadiiNativeRadio?.openFileWithIntent) {
+    try {
+      return await RadiiNativeRadio.openFileWithIntent(filePathOrUri, effectiveMime);
+    } catch (e) {
+      console.warn('openFileWithNativeIntent error:', e);
+      return false;
+    }
+  }
+  return false;
+}
+
+export async function openWifiSettingsPanel(): Promise<boolean> {
+  if (Platform.OS === 'android' && RadiiNativeRadio?.openWifiSettings) {
+    try {
+      return await RadiiNativeRadio.openWifiSettings();
+    } catch (e) {
+      console.warn('openWifiSettingsPanel error:', e);
+      return false;
+    }
+  }
+  return false;
+}
+
+export interface PermissionsStatus {
+  bluetooth: boolean;
+  bluetoothEnabled: boolean;
+  wifi: boolean;
+  wifiEnabled: boolean;
+  location: boolean;
+  audio: boolean;
+  notifications: boolean;
+  storage?: boolean;
+}
+
+export async function checkAppPermissionsStatus(): Promise<PermissionsStatus> {
+  if (Platform.OS === 'android' && RadiiNativeRadio?.checkPermissionsStatus) {
+    try {
+      return await RadiiNativeRadio.checkPermissionsStatus();
+    } catch (e) {
+      console.warn('checkPermissionsStatus error:', e);
+    }
+  }
+  return {
+    bluetooth: true,
+    bluetoothEnabled: true,
+    wifi: true,
+    wifiEnabled: true,
+    location: true,
+    audio: true,
+    notifications: true,
+    storage: true,
+  };
+}
+
+export async function requestAppAudioPermission(): Promise<boolean> {
+  if (Platform.OS === 'android' && RadiiNativeRadio?.requestAudioPermission) {
+    try {
+      return await RadiiNativeRadio.requestAudioPermission();
+    } catch (e) {
+      console.warn('requestAudioPermission error:', e);
+      return false;
+    }
+  }
+  return true;
+}
+
+export async function requestAppNotificationPermission(): Promise<boolean> {
+  if (Platform.OS === 'android' && RadiiNativeRadio?.requestNotificationPermission) {
+    try {
+      return await RadiiNativeRadio.requestNotificationPermission();
+    } catch (e) {
+      console.warn('requestNotificationPermission error:', e);
+      return false;
+    }
+  }
+  return true;
+}
+
+export async function requestAppStoragePermission(): Promise<boolean> {
+  if (Platform.OS === 'android' && RadiiNativeRadio?.requestStoragePermission) {
+    try {
+      return await RadiiNativeRadio.requestStoragePermission();
+    } catch (e) {
+      console.warn('requestStoragePermission error:', e);
+      return false;
+    }
+  }
+  return true;
+}
+
+export async function openDeviceAppSettings(): Promise<boolean> {
+  if (Platform.OS === 'android' && RadiiNativeRadio?.openAppSettings) {
+    try {
+      return await RadiiNativeRadio.openAppSettings();
+    } catch (e) {
+      console.warn('openAppSettings error:', e);
+      return false;
+    }
+  }
+  return false;
 }

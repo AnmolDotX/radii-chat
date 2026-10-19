@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, Modal, Pressable } from 'react-native';
-import { useOrbitorTheme, Typography, Radius, Spacing } from '../../theme';
+import { useOrbitorTheme, Typography, Radius, Spacing, Shadows } from '../../theme';
 import { PeerAvatar } from '../common/PeerAvatar';
 import { Badge } from '../common/Badge';
 
@@ -36,7 +36,6 @@ export const ConnectionRequestModal: React.FC<ConnectionRequestModalProps> = ({
             styles.sheet,
             {
               backgroundColor: theme.surface,
-              borderColor: theme.accentCyan,
             },
           ]}>
           <View style={styles.header}>
@@ -54,7 +53,6 @@ export const ConnectionRequestModal: React.FC<ConnectionRequestModalProps> = ({
               styles.peerCard,
               {
                 backgroundColor: theme.surfaceElevated,
-                borderColor: theme.border,
               },
             ]}>
             <PeerAvatar name={request.peerName} size={44} showSignal={true} />
@@ -87,7 +85,6 @@ export const ConnectionRequestModal: React.FC<ConnectionRequestModalProps> = ({
                 styles.declineButton,
                 {
                   backgroundColor: theme.surfaceElevated,
-                  borderColor: theme.border,
                   opacity: pressed ? 0.75 : 1,
                 },
               ]}>
@@ -126,7 +123,8 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 400,
     borderRadius: Radius.xl,
-    borderWidth: 1.5,
+    borderWidth: 0,
+    ...Shadows.elevated,
     padding: Spacing.xl,
     gap: Spacing.md,
   },
@@ -152,7 +150,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: Spacing.md,
     borderRadius: Radius.lg,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     gap: Spacing.md,
   },
   peerDetails: {
@@ -171,6 +170,7 @@ const styles = StyleSheet.create({
   pinBox: {
     borderRadius: Radius.md,
     padding: Spacing.md,
+    ...Shadows.subtle,
     alignItems: 'center',
     gap: 4,
   },
@@ -200,7 +200,8 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: Spacing.sm + 4,
     borderRadius: Radius.lg,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -213,6 +214,8 @@ const styles = StyleSheet.create({
     flex: 2,
     paddingVertical: Spacing.sm + 4,
     borderRadius: Radius.lg,
+    borderWidth: 0,
+    ...Shadows.subtle,
     alignItems: 'center',
     justifyContent: 'center',
   },

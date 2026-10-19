@@ -32,6 +32,7 @@ export type MessageDeliveryStatus =
   | 'sending'
   | 'sent'
   | 'delivered'
+  | 'read'
   | 'failed'
   | 'queued_offline';
 
@@ -47,18 +48,67 @@ export interface Message {
   isMe: boolean;
   type?:
     | 'CHAT_MSG'
+    | 'ROOM_MSG'
+    | 'ROOM_ANNOUNCE'
+    | 'ROOM_QUERY'
+    | 'ROOM_SYNC'
+    | 'ROOM_JOIN'
+    | 'ROOM_LEAVE'
+    | 'ROOM_DESTROYED'
+    | 'MEDIA_TRANSFER_REQUEST'
+    | 'MEDIA_TRANSFER_ACCEPT'
+    | 'MEDIA_TRANSFER_REJECT'
+    | 'MEDIA_PAYLOAD_CHUNK'
+    | 'MEDIA_STREAM_END'
+    | 'MEDIA_REQUEST_MISSING'
+    | 'MEDIA_TRANSFER_COMPLETE'
+    | 'MEDIA_TRANSFER_CANCEL'
     | 'CONNECTION_REQUEST'
     | 'CONNECTION_ACCEPTED'
     | 'CONNECTION_DECLINED'
     | 'CONNECTION_DISCONNECTED'
-    | 'MSG_ACK';
+    | 'MSG_ACK'
+    | 'MSG_READ'
+    | 'TYPING_START'
+    | 'TYPING_STOP';
   targetPeerId?: string;
   ackMessageId?: string;
   verificationCode?: string;
   senderDevice?: string;
   isVoice?: boolean;
   audioDurationSeconds?: number;
+  audioUri?: string;
+  audioBase64?: string;
   isPlusRelay?: boolean;
+  isImage?: boolean;
+  imageUri?: string;
+  isFile?: boolean;
+  fileUri?: string;
+  isSystem?: boolean;
+  roomId?: string;
+  roomCode?: string;
+  roomName?: string;
+  transferId?: string;
+  transferType?: 'image' | 'voice' | 'file';
+  transferStatus?: 'awaiting_acceptance' | 'transferring' | 'completed' | 'declined' | 'cancelled' | 'failed';
+  transferProgress?: number;
+  fileName?: string;
+  fileSizeBytes?: number;
+  ipAddress?: string;
+  targetCode?: string;
+  description?: string;
+  creatorId?: string;
+  creatorName?: string;
+  chunkIndex?: number;
+  totalChunks?: number;
+  chunkData?: string;
+  mimeType?: string;
+  mediaType?: 'image' | 'voice' | 'file';
+  missingIndices?: number[];
+  members?: string[];
+  memberNames?: Record<string, string>;
+  senderShortId?: string;
+  memberCount?: number;
 }
 
 export interface OutboxItem {
@@ -80,6 +130,12 @@ export interface EventRoom {
   memberCount: number;
   isActive: boolean;
   description: string;
+  creatorId?: string;
+  creatorName?: string;
+  epoch?: number;
+  isJoined?: boolean;
+  members?: string[];
+  memberNames?: Record<string, string>;
 }
 
 export interface FileTransfer {

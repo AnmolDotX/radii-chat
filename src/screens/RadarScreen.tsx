@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,16 +9,16 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { useOrbitorTheme, Typography, Radius, Spacing, Layout } from '@/theme';
+import { useOrbitorTheme, Typography, Radius, Spacing, Layout, Shadows } from '@/theme';
 import { useOrbitor } from '@/context/OrbitorContext';
 import { transportManager } from '@/transport/TransportManager';
+import { normalizePeerId } from '@/transport/NativeRadioTransport';
 import { RadarSweep } from '@/components/radar/RadarSweep';
 import { PeerAvatar } from '@/components/common/PeerAvatar';
 import { Badge } from '@/components/common/Badge';
 import { OutboxNotice } from '@/components/common/OutboxNotice';
-import { ChatTeardropIcon, FileFlingIcon } from '@/components/common/ActionIcons';
+import { ChatTeardropIcon } from '@/components/common/ActionIcons';
 import { Ionicons } from '@expo/vector-icons';
-import { SOSModal } from '@/components/modals/SOSModal';
 import { RadioPermissionModal } from '@/components/modals/RadioPermissionModal';
 import { ConnectionRequestModal } from '@/components/modals/ConnectionRequestModal';
 import { ProfileSetupModal } from '@/components/modals/ProfileSetupModal';
@@ -26,7 +26,7 @@ import { ConnectPeerDialog } from '@/components/modals/ConnectPeerDialog';
 import { PeerDetailSheet } from '@/components/modals/PeerDetailSheet';
 import { Peer } from '@/core/types';
 
-export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?: (peerId: string) => void }) {
+export default function RadarScreen() {
   const theme = useOrbitorTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -34,12 +34,12 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
     myProfile,
     updateUserProfile,
     peers,
+    savedPeers,
     networkMode,
     setNetworkMode,
     autoUpgrade,
     setAutoUpgrade,
     outboxItems,
-    triggerSOS,
     joinEventRoom,
     incomingRequest,
     acceptConnection,
@@ -51,23 +51,61 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
     setPermissionsGranted,
   } = useOrbitor();
 
-  const [sosVisible, setSosVisible] = useState(false);
   const [permVisible, setPermVisible] = useState(false);
   const [visibilitySheetVisible, setVisibilitySheetVisible] = useState(false);
   const [connectDialogPeer, setConnectDialogPeer] = useState<Peer | null>(null);
   const [detailPeer, setDetailPeer] = useState<Peer | null>(null);
 
-  // New View Controls: Radar vs List View & Max peers to display filter
+  // View Controls
   const [viewMode, setViewMode] = useState<'radar' | 'list'>('radar');
   const [maxPeersFilter, setMaxPeersFilter] = useState<number | 'all'>(10);
   const [isRadioActive, setIsRadioActive] = useState<boolean>(true);
 
+  // Determine if a peer is already saved or paired
+  const isPeerSavedOrPaired = useCallback((p: Peer) => {
+    if (p.isPaired) return true;
+    const canonicalId = normalizePeerId(p.id);
+    const shortId = (p.shortId || canonicalId.slice(-6)).toLowerCase();
+    return savedPeers.some(
+      (sp) => sp.id === canonicalId || sp.id.toLowerCase().endsWith(shortId)
+    );
+  }, [savedPeers]);
 
-  const unpairedRadarPeers = peers.filter((p) => !p.isPaired);
-  const pairedPeers = peers.filter((p) => p.isPaired);
+  // Only unpaired live peers in radio range appear as discoverable blips on the radar sweep & list
+  const liveRadarPeers = useMemo(
+    () => peers.filter((p) => !isPeerSavedOrPaired(p) && p.distanceBracket !== 'out_of_range'),
+    [peers, isPeerSavedOrPaired]
+  );
+
+  // Paired / Connected companions reconciliation
+  const connectedCompanions = useMemo(() => {
+    const map = new Map<string, { peer: Peer; isOnline: boolean }>();
+    savedPeers.forEach((p) => {
+      const canonicalId = normalizePeerId(p.id);
+      map.set(canonicalId, { peer: { ...p, id: canonicalId, isPaired: true }, isOnline: false });
+    });
+    peers.forEach((p) => {
+      const canonicalId = normalizePeerId(p.id);
+      const isOnline = p.distanceBracket !== 'out_of_range';
+      if (map.has(canonicalId)) {
+        const existing = map.get(canonicalId)!;
+        map.set(canonicalId, {
+          peer: { ...existing.peer, ...p, id: canonicalId, isPaired: true },
+          isOnline,
+        });
+      } else if (p.isPaired) {
+        map.set(canonicalId, { peer: p, isOnline });
+      }
+    });
+    return Array.from(map.values());
+  }, [savedPeers, peers]);
 
   const handleRadarPeerPress = (peer: Peer) => {
-    setConnectDialogPeer(peer);
+    if (isPeerSavedOrPaired(peer)) {
+      handleOpenChat(peer);
+    } else {
+      setConnectDialogPeer(peer);
+    }
   };
 
   const handleRadarPeerLongPress = (peer: Peer) => {
@@ -79,17 +117,6 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
       pathname: '/chat/[id]',
       params: { id: peer.id, name: peer.name },
     });
-  };
-
-  const handleOpenFling = (peer: Peer) => {
-    if (onNavigateToFling) {
-      onNavigateToFling(peer.id);
-    } else {
-      router.push({
-        pathname: '/fling' as any,
-        params: { peerId: peer.id },
-      });
-    }
   };
 
   return (
@@ -116,7 +143,6 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
                 styles.visibilityPill,
                 {
                   backgroundColor: theme.surface,
-                  borderColor: theme.border,
                   opacity: pressed ? 0.75 : 1,
                 },
               ]}>
@@ -145,72 +171,15 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
           </View>
         </View>
 
-        {/* Central Mode Switcher: Offline Connection vs Online Connection */}
-        <Pressable
-          onPress={() => setNetworkMode(networkMode === 'offline' ? 'online' : 'offline')}
-          accessibilityRole="button"
-          accessibilityLabel={`Current mode: ${networkMode === 'offline' ? 'Offline Connection' : 'Online Connection'}. Tap to switch.`}
-          style={({ pressed }) => [
-            styles.modeSwitcherBanner,
-            {
-              backgroundColor: theme.surface,
-              borderColor: networkMode === 'offline' ? theme.border : theme.accentCyan,
-              opacity: pressed ? 0.82 : 1,
-            },
-          ]}>
-          <View style={styles.modeSwitcherLeft}>
-            <View
-              style={[
-                styles.pulseDot,
-                {
-                  backgroundColor:
-                    networkMode === 'offline' ? theme.success : theme.accentCyan,
-                },
-              ]}
-            />
-            <View style={styles.modeSwitcherTextCol}>
-              <View style={styles.modeSwitcherTitleRow}>
-                <Text style={[styles.modeSwitcherTitle, { color: theme.text }]}>
-                  {networkMode === 'offline' ? 'Offline Connection' : 'Online Connection'}
-                </Text>
-                <Badge
-                  label={networkMode === 'offline' ? 'BLE & NEARBY' : 'LOCATION GPS'}
-                  variant={networkMode === 'offline' ? 'green' : 'cyan'}
-                  size="sm"
-                />
-              </View>
-              <Text style={[styles.modeSwitcherSubtitle, { color: theme.textSecondary }]}>
-                {networkMode === 'offline'
-                  ? 'Antenna mesh (Bluetooth & Nearby) · Zero internet'
-                  : 'Proximity-based discovery using device location'}
-              </Text>
-            </View>
-          </View>
-
-          <View
-            style={[
-              styles.modeSwitchActionPill,
-              { backgroundColor: theme.surfaceElevated, borderColor: theme.border },
-            ]}>
-            <Text
-              style={[
-                styles.modeSwitchActionText,
-                { color: networkMode === 'offline' ? theme.accentCyan : theme.accentBlue },
-              ]}>
-              {networkMode === 'offline' ? 'Switch Online ↗' : 'Switch Offline ↗'}
-            </Text>
-          </View>
-        </Pressable>
-
         {/* View Controls Toolbar: Radar vs List View & Max Displayed Peers */}
-        <View style={[styles.controlBar, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <View style={[styles.controlBar, { backgroundColor: theme.surface }]}>
           {/* Left: View Mode Segment */}
           <View style={styles.viewSegment}>
             <Pressable
               onPress={() => setViewMode('radar')}
               style={[
                 styles.segmentBtn,
-                viewMode === 'radar' && { backgroundColor: theme.surfaceElevated, borderColor: theme.border },
+                viewMode === 'radar' && { backgroundColor: theme.surfaceElevated },
               ]}>
               <Ionicons
                 name="radio"
@@ -230,7 +199,7 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
               onPress={() => setViewMode('list')}
               style={[
                 styles.segmentBtn,
-                viewMode === 'list' && { backgroundColor: theme.surfaceElevated, borderColor: theme.border },
+                viewMode === 'list' && { backgroundColor: theme.surfaceElevated },
               ]}>
               <Ionicons
                 name="list"
@@ -260,7 +229,6 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
                     styles.filterPill,
                     {
                       backgroundColor: isSelected ? theme.text : theme.surfaceElevated,
-                      borderColor: isSelected ? theme.text : theme.border,
                     },
                   ]}>
                   <Text
@@ -282,32 +250,32 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
         {/* Dynamic Display: Radar View OR List View */}
         {viewMode === 'radar' ? (
           <RadarSweep
-            peers={maxPeersFilter === 'all' ? unpairedRadarPeers : unpairedRadarPeers.slice(0, maxPeersFilter)}
+            peers={maxPeersFilter === 'all' ? liveRadarPeers : liveRadarPeers.slice(0, maxPeersFilter)}
             onSelectPeer={handleRadarPeerPress}
             onLongPressPeer={handleRadarPeerLongPress}
             isScanning={isScanning}
             onPressRadar={!isScanning ? rescan : undefined}
           />
         ) : (
-          <View style={[styles.radarListView, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <View style={[styles.radarListView, { backgroundColor: theme.surface }]}>
             <View style={styles.listHeaderRow}>
               <Text style={[styles.listHeaderTitle, { color: theme.textSecondary }]}>
-                NEARBY DISCOVERED PEERS ({unpairedRadarPeers.length})
+                NEARBY DISCOVERED PEERS ({liveRadarPeers.length})
               </Text>
               <Badge label="LOCAL RADIO SCAN" variant="cyan" size="sm" />
             </View>
 
-            {unpairedRadarPeers.length === 0 ? (
+            {liveRadarPeers.length === 0 ? (
               <View style={styles.emptyListWrap}>
                 <Text style={[styles.emptyListText, { color: theme.textTertiary }]}>
                   Searching nearby radius over BLE & Wi-Fi Direct...
                 </Text>
               </View>
             ) : (
-              (maxPeersFilter === 'all' ? unpairedRadarPeers : unpairedRadarPeers.slice(0, maxPeersFilter)).map((peer) => (
+              (maxPeersFilter === 'all' ? liveRadarPeers : liveRadarPeers.slice(0, maxPeersFilter)).map((peer: Peer) => (
                 <View
                   key={peer.id}
-                  style={[styles.peerListItem, { borderBottomColor: theme.border }]}>
+                  style={styles.peerListItem}>
                   <PeerAvatar peer={peer} size={40} showSignal={true} />
                   <View style={styles.peerListInfo}>
                     <View style={styles.peerListNameRow}>
@@ -324,7 +292,9 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
                       styles.quickPairBtn,
                       { backgroundColor: theme.text, opacity: pressed ? 0.8 : 1 },
                     ]}>
-                    <Text style={[styles.quickPairBtnText, { color: theme.background }]}>Pair</Text>
+                    <Text style={[styles.quickPairBtnText, { color: theme.background }]}>
+                      {isPeerSavedOrPaired(peer) ? 'Chat' : 'Pair'}
+                    </Text>
                   </Pressable>
                 </View>
               ))
@@ -332,23 +302,22 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
           </View>
         )}
 
-        {/* Section: Discovered / Connected Peers */}
-        {pairedPeers.length === 0 ? (
-          <View style={[styles.emptyCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-            <View style={[styles.emptyStatusBadge, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}>
+        {/* Section: Radar Spectrum Summary & Controls */}
+        <View style={[styles.emptyCard, { backgroundColor: theme.surface }]}>
+            <View style={[styles.emptyStatusBadge, { backgroundColor: theme.surfaceElevated }]}>
               <View style={[styles.pulseDot, { backgroundColor: permissionsGranted ? (isScanning ? theme.success : theme.accentCyan) : theme.warning }]} />
               <Text style={[styles.emptyStatusBadgeText, { color: permissionsGranted ? (isScanning ? theme.success : theme.textSecondary) : theme.warning }]}>
                 {permissionsGranted
                   ? isScanning
-                    ? `SCANNING ACTIVE · ${unpairedRadarPeers.length} DETECTED`
-                    : `SCAN TIMEOUT · ${unpairedRadarPeers.length} FOUND`
+                    ? `SCANNING ACTIVE · ${liveRadarPeers.length} DETECTED`
+                    : `SCAN TIMEOUT · ${liveRadarPeers.length} FOUND`
                   : 'OFFLINE RADIOS DISABLED'}
               </Text>
             </View>
 
             <Text style={[styles.emptyTitle, { color: theme.text }]}>
-              {unpairedRadarPeers.length > 0
-                ? `${unpairedRadarPeers.length} Companion${unpairedRadarPeers.length === 1 ? '' : 's'} on Radar`
+              {liveRadarPeers.length > 0
+                ? `${liveRadarPeers.length} Companion${liveRadarPeers.length === 1 ? '' : 's'} on Radar`
                 : permissionsGranted
                 ? isScanning
                   ? 'Scanning Offline Spectrum'
@@ -357,7 +326,7 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
             </Text>
 
             <Text style={[styles.emptySubtitle, { color: theme.textSecondary }]}>
-              {unpairedRadarPeers.length > 0
+              {liveRadarPeers.length > 0
                 ? 'Tap any companion blip on the radar sweep circle above to pair and start chatting.'
                 : permissionsGranted
                 ? isScanning
@@ -369,22 +338,22 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
             {/* Live Metrics / Range info row */}
             {permissionsGranted && (
               <View style={styles.metricsRow}>
-                <View style={[styles.metricChip, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}>
+                <View style={[styles.metricChip, { backgroundColor: theme.surfaceElevated }]}>
                   <Ionicons name="radio-outline" size={12} color={theme.accentCyan} />
                   <Text style={[styles.metricChipText, { color: theme.textSecondary }]}>
                     Range: ≤ 10m ideal
                   </Text>
                 </View>
-                <View style={[styles.metricChip, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}>
+                <View style={[styles.metricChip, { backgroundColor: theme.surfaceElevated }]}>
                   <Ionicons name="hardware-chip-outline" size={12} color={theme.success} />
                   <Text style={[styles.metricChipText, { color: theme.textSecondary }]}>
                     BLE + Mesh
                   </Text>
                 </View>
-                <View style={[styles.metricChip, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}>
+                <View style={[styles.metricChip, { backgroundColor: theme.surfaceElevated }]}>
                   <Ionicons name="people-outline" size={12} color={theme.accentBlue} />
                   <Text style={[styles.metricChipText, { color: theme.textSecondary }]}>
-                    {unpairedRadarPeers.length} Found
+                    {liveRadarPeers.length} Found
                   </Text>
                 </View>
               </View>
@@ -425,11 +394,13 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
               )}
             </View>
           </View>
-        ) : (
+
+        {/* PAIRED & SAVED COMPANIONS LIST */}
+        {connectedCompanions.length > 0 && (
           <View style={styles.peersSection}>
             <View style={styles.sectionHeaderRow}>
               <Text style={[styles.sectionHeading, { color: theme.textTertiary }]}>
-                DISCOVERED & PAIRED PEERS ({pairedPeers.length})
+                PAIRED COMPANIONS ({connectedCompanions.length})
               </Text>
               <Pressable
                 onPress={() => rescan()}
@@ -439,22 +410,21 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
                   { opacity: pressed ? 0.6 : 1 },
                 ]}>
                 <Ionicons name="refresh-outline" size={13} color={theme.accentCyan} />
-                <Text style={[styles.rescanHeaderBtnText, { color: theme.accentCyan }]}>Rescan</Text>
+                <Text style={[styles.rescanHeaderBtnText, { color: theme.accentCyan }]}>Scan Radio</Text>
               </Pressable>
             </View>
 
             <View style={styles.peersList}>
-              {pairedPeers.map((peer) => (
+              {connectedCompanions.map(({ peer, isOnline }: { peer: Peer; isOnline: boolean }) => (
                 <View
                   key={peer.id}
                   style={[
                     styles.peerRow,
                     {
                       backgroundColor: theme.surface,
-                      borderColor: theme.border,
                     },
                   ]}>
-                  <PeerAvatar peer={peer} size={42} showSignal={true} />
+                  <PeerAvatar peer={peer} size={42} showSignal={isOnline} />
 
                   <View style={styles.peerInfo}>
                     <View style={styles.peerNameRow}>
@@ -462,18 +432,19 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
                         {peer.name}
                       </Text>
                       <Badge
-                        label={peer.deviceName || peer.activeTransport.toUpperCase()}
-                        variant="green"
+                        label={isOnline ? (peer.activeTransport || 'nearby').toUpperCase() : 'OFFLINE'}
+                        variant={isOnline ? 'green' : 'neutral'}
                         size="sm"
                       />
                     </View>
 
                     <Text style={[styles.peerDistance, { color: theme.textTertiary }]}>
-                      Paired · {peer.activeTransport.toUpperCase()} · {peer.rssi} dBm
+                      {isOnline
+                        ? `In Range · ${peer.rssi} dBm · Direct Link`
+                        : 'Offline · Out of range'}
                     </Text>
                   </View>
 
-                  {/* Action buttons: Chat & File Fling */}
                   <View style={styles.peerActionButtons}>
                     <Pressable
                       onPress={() => handleOpenChat(peer)}
@@ -482,25 +453,10 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
                         styles.actionCircleBtn,
                         {
                           backgroundColor: theme.surfaceElevated,
-                          borderColor: theme.border,
                           opacity: pressed ? 0.7 : 1,
                         },
                       ]}>
                       <ChatTeardropIcon size={18} color={theme.text} />
-                    </Pressable>
-
-                    <Pressable
-                      onPress={() => handleOpenFling(peer)}
-                      accessibilityLabel={`Send file to ${peer.name}`}
-                      style={({ pressed }) => [
-                        styles.actionCircleBtn,
-                        {
-                          backgroundColor: theme.surfaceElevated,
-                          borderColor: theme.border,
-                          opacity: pressed ? 0.7 : 1,
-                        },
-                      ]}>
-                      <FileFlingIcon size={18} color={theme.accentCyan} />
                     </Pressable>
                   </View>
                 </View>
@@ -508,24 +464,6 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
             </View>
           </View>
         )}
-
-        {/* Deliberate Emergency SOS Access */}
-        <View style={styles.bottomSafetySection}>
-          <Pressable
-            onPress={() => setSosVisible(true)}
-            style={({ pressed }) => [
-              styles.safetyButton,
-              {
-                backgroundColor: theme.surface,
-                borderColor: theme.border,
-                opacity: pressed ? 0.75 : 1,
-              },
-            ]}>
-            <Text style={[styles.safetyText, { color: theme.danger }]}>
-              🚨 Emergency Offline Radio Broadcast (SOS)
-            </Text>
-          </Pressable>
-        </View>
       </ScrollView>
 
       {/* Visibility Quick Selector Modal */}
@@ -538,7 +476,7 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
           <View
             style={[
               styles.visibilitySheet,
-              { backgroundColor: theme.surface, borderColor: theme.border },
+              { backgroundColor: theme.surface },
             ]}>
             <Text style={[styles.modalSheetTitle, { color: theme.text }]}>
               Nearby Radar Visibility
@@ -581,7 +519,6 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
                         backgroundColor: isSelected
                           ? theme.surfaceHighlight
                           : theme.surfaceElevated,
-                        borderColor: isSelected ? theme.accentCyan : theme.border,
                         opacity: pressed ? 0.75 : 1,
                       },
                     ]}>
@@ -616,7 +553,6 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
                 styles.dismissBtn,
                 {
                   backgroundColor: theme.surfaceElevated,
-                  borderColor: theme.border,
                   opacity: pressed ? 0.75 : 1,
                 },
               ]}>
@@ -658,13 +594,6 @@ export default function RadarScreen({ onNavigateToFling }: { onNavigateToFling?:
           setDetailPeer(null);
           setConnectDialogPeer(peer);
         }}
-      />
-
-      {/* Emergency SOS Modal */}
-      <SOSModal
-        visible={sosVisible}
-        onClose={() => setSosVisible(false)}
-        onBroadcastSOS={triggerSOS}
       />
 
       {/* Radio Permissions Modal */}
@@ -733,7 +662,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: Spacing.sm + 4,
     borderRadius: Radius.full,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
   },
   iconButtonText: {
     fontSize: Typography.sizes.xs + 1,
@@ -747,7 +677,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: Spacing.sm + 4,
     borderRadius: Radius.full,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
   },
   visibilityDot: {
     width: 6,
@@ -768,7 +699,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm,
     paddingHorizontal: Spacing.base,
     borderRadius: Radius.full,
-    borderWidth: 1,
+    borderWidth: 0,
   },
   safetyText: {
     fontSize: Typography.sizes.xs,
@@ -777,7 +708,7 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.75)',
+    backgroundColor: 'rgba(0,0,0,0.65)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: Spacing.base,
@@ -786,7 +717,8 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 380,
     borderRadius: Radius.xl,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.elevated,
     padding: Spacing.lg,
     gap: Spacing.md,
   },
@@ -809,7 +741,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: Spacing.sm + 3,
     borderRadius: Radius.lg,
-    borderWidth: 1,
+    borderWidth: 0,
     gap: Spacing.sm,
   },
   sheetOptionTextWrap: {
@@ -828,7 +760,7 @@ const styles = StyleSheet.create({
   dismissBtn: {
     paddingVertical: Spacing.sm + 2,
     borderRadius: Radius.lg,
-    borderWidth: 1,
+    borderWidth: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -841,7 +773,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.lg,
     borderRadius: Radius.xl,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.card,
     gap: Spacing.xs + 3,
   },
   emptyStatusBadge: {
@@ -851,7 +784,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: Spacing.sm + 2,
     borderRadius: Radius.full,
-    borderWidth: 1,
+    borderWidth: 0,
     marginBottom: 4,
   },
   emptyStatusBadgeText: {
@@ -888,7 +821,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: Spacing.sm + 2,
     borderRadius: Radius.full,
-    borderWidth: 1,
+    borderWidth: 0,
   },
   metricChipText: {
     fontSize: Typography.sizes.xs - 2,
@@ -908,6 +841,8 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm + 2,
     paddingHorizontal: Spacing.base,
     borderRadius: Radius.full,
+    borderWidth: 0,
+    ...Shadows.subtle,
   },
   primaryActionText: {
     fontSize: Typography.sizes.xs + 1,
@@ -918,7 +853,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm + 2,
     paddingHorizontal: Spacing.base,
     borderRadius: Radius.full,
-    borderWidth: 1,
+    borderWidth: 0,
   },
   secondaryActionText: {
     fontSize: Typography.sizes.xs + 1,
@@ -962,7 +897,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: Spacing.md,
     borderRadius: Radius.lg,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     gap: Spacing.md,
   },
   peerInfo: {
@@ -978,7 +914,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: Radius.full,
-    borderWidth: 1,
+    borderWidth: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1003,7 +939,8 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm + 1,
     paddingHorizontal: Spacing.md,
     borderRadius: Radius.xl,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     gap: Spacing.sm,
   },
   modeSwitcherLeft: {
@@ -1040,7 +977,7 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     paddingHorizontal: Spacing.sm + 2,
     borderRadius: Radius.full,
-    borderWidth: 1,
+    borderWidth: 0,
   },
   modeSwitchActionText: {
     fontSize: Typography.sizes.xs - 1,
@@ -1053,7 +990,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: Spacing.xs,
     borderRadius: Radius.lg,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
   },
   viewSegment: {
     flexDirection: 'row',
@@ -1067,8 +1005,7 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     paddingHorizontal: Spacing.sm + 2,
     borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: 'transparent',
+    borderWidth: 0,
   },
   segmentText: {
     fontSize: Typography.sizes.xs,
@@ -1089,7 +1026,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     paddingHorizontal: 7,
     borderRadius: Radius.sm,
-    borderWidth: 1,
+    borderWidth: 0,
   },
   filterPillText: {
     fontSize: Typography.sizes.xs - 2,
@@ -1098,7 +1035,8 @@ const styles = StyleSheet.create({
   },
   radarListView: {
     borderRadius: Radius.xl,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.card,
     padding: Spacing.base,
     gap: Spacing.sm,
   },
@@ -1128,7 +1066,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.md,
     paddingVertical: Spacing.sm + 2,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: 0,
   },
   peerListInfo: {
     flex: 1,
@@ -1152,6 +1090,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: Spacing.base,
     borderRadius: Radius.full,
+    borderWidth: 0,
+    ...Shadows.subtle,
   },
   quickPairBtnText: {
     fontSize: Typography.sizes.xs,

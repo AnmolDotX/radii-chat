@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, Modal, Pressable, ActivityIndicator } from 'react-native';
-import { useOrbitorTheme, Typography, Radius, Spacing } from '../../theme';
+import { useOrbitorTheme, Typography, Radius, Spacing, Shadows } from '../../theme';
 import { Peer } from '../../core/types';
 import { PeerAvatar } from '../common/PeerAvatar';
 import { Badge } from '../common/Badge';
@@ -71,12 +71,6 @@ export const ConnectPeerDialog: React.FC<ConnectPeerDialogProps> = ({
             styles.sheet,
             {
               backgroundColor: theme.surface,
-              borderColor:
-                currentStatus === 'accepted'
-                  ? theme.success
-                  : currentStatus === 'waiting'
-                  ? theme.accentCyan
-                  : theme.border,
             },
           ]}>
           <View style={styles.header}>
@@ -108,7 +102,6 @@ export const ConnectPeerDialog: React.FC<ConnectPeerDialogProps> = ({
                     styles.cancelButton,
                     {
                       backgroundColor: theme.surfaceElevated,
-                      borderColor: theme.border,
                       opacity: pressed ? 0.75 : 1,
                     },
                   ]}>
@@ -141,7 +134,7 @@ export const ConnectPeerDialog: React.FC<ConnectPeerDialogProps> = ({
               </Text>
 
               {/* Matching Security Code */}
-              <View style={[styles.pinBox, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}>
+              <View style={[styles.pinBox, { backgroundColor: theme.surfaceElevated }]}>
                 <Text style={[styles.pinLabel, { color: theme.textTertiary }]}>
                   SECURITY VERIFICATION PIN
                 </Text>
@@ -159,7 +152,6 @@ export const ConnectPeerDialog: React.FC<ConnectPeerDialogProps> = ({
                   styles.cancelWaitButton,
                   {
                     backgroundColor: theme.surfaceElevated,
-                    borderColor: theme.border,
                     opacity: pressed ? 0.75 : 1,
                   },
                 ]}>
@@ -209,7 +201,6 @@ export const ConnectPeerDialog: React.FC<ConnectPeerDialogProps> = ({
                   styles.cancelWaitButton,
                   {
                     backgroundColor: theme.surfaceElevated,
-                    borderColor: theme.border,
                     opacity: pressed ? 0.75 : 1,
                   },
                 ]}>
@@ -235,7 +226,8 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 360,
     borderRadius: Radius.xl,
-    borderWidth: 1.5,
+    borderWidth: 0,
+    ...Shadows.elevated,
     padding: Spacing.xl,
     gap: Spacing.base,
   },
@@ -271,7 +263,8 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm + 2,
     alignItems: 'center',
     borderRadius: Radius.full,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
   },
   cancelText: {
     fontSize: Typography.sizes.sm,
@@ -282,6 +275,8 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm + 2,
     alignItems: 'center',
     borderRadius: Radius.full,
+    borderWidth: 0,
+    ...Shadows.subtle,
   },
   connectText: {
     fontSize: Typography.sizes.sm,
@@ -301,7 +296,8 @@ const styles = StyleSheet.create({
     width: '100%',
     padding: Spacing.md,
     borderRadius: Radius.lg,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     alignItems: 'center',
     gap: Spacing.xs,
     marginVertical: Spacing.xs,
@@ -326,7 +322,8 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm,
     alignItems: 'center',
     borderRadius: Radius.full,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     marginTop: Spacing.xs,
   },
   cancelWaitText: {
@@ -348,6 +345,8 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm + 3,
     alignItems: 'center',
     borderRadius: Radius.full,
+    borderWidth: 0,
+    ...Shadows.subtle,
     marginTop: Spacing.xs,
   },
   openChatText: {

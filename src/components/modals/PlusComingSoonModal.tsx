@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, Modal, Pressable } from 'react-native';
-import { useOrbitorTheme, Typography, Radius, Spacing } from '../../theme';
+import { useOrbitorTheme, Typography, Radius, Spacing, Shadows } from '../../theme';
 import { Badge } from '../common/Badge';
 
 interface PlusComingSoonModalProps {
@@ -46,7 +46,6 @@ export const PlusComingSoonModal: React.FC<PlusComingSoonModalProps> = ({
             styles.sheet,
             {
               backgroundColor: theme.surface,
-              borderColor: theme.plus,
             },
           ]}>
           <View style={styles.header}>
@@ -66,7 +65,6 @@ export const PlusComingSoonModal: React.FC<PlusComingSoonModalProps> = ({
                   styles.perkItem,
                   {
                     backgroundColor: theme.surfaceElevated,
-                    borderColor: theme.border,
                   },
                 ]}>
                 <View style={styles.perkHeader}>
@@ -98,7 +96,6 @@ export const PlusComingSoonModal: React.FC<PlusComingSoonModalProps> = ({
               styles.dismissButton,
               {
                 backgroundColor: theme.surfaceElevated,
-                borderColor: theme.border,
                 opacity: pressed ? 0.7 : 1,
               },
             ]}>
@@ -122,7 +119,8 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 420,
     borderRadius: Radius.xl,
-    borderWidth: 1.5,
+    borderWidth: 0,
+    ...Shadows.elevated,
     padding: Spacing.lg,
     gap: Spacing.md,
   },
@@ -154,7 +152,8 @@ const styles = StyleSheet.create({
   },
   perkItem: {
     borderRadius: Radius.md,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     padding: Spacing.sm + 2,
     gap: 3,
   },
@@ -176,6 +175,8 @@ const styles = StyleSheet.create({
   notifyButton: {
     paddingVertical: Spacing.md,
     borderRadius: Radius.lg,
+    borderWidth: 0,
+    ...Shadows.subtle,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -187,7 +188,8 @@ const styles = StyleSheet.create({
   dismissButton: {
     paddingVertical: Spacing.sm + 2,
     borderRadius: Radius.lg,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     alignItems: 'center',
     justifyContent: 'center',
   },

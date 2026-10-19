@@ -76,6 +76,12 @@ export class TransportManager {
   public async sendVoice(peerId: string, durationSec: number): Promise<boolean> {
     return this.activeTransport.sendVoiceChunk(peerId, 'audio_simulated_payload', durationSec);
   }
+
+  public showNotification(title: string, body: string, peerId: string): void {
+    if ('showNotification' in this.activeTransport) {
+      (this.activeTransport as any).showNotification(title, body, peerId);
+    }
+  }
 }
 
 export const transportManager = new TransportManager();

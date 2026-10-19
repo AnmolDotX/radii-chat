@@ -9,7 +9,7 @@ import Animated, {
   Easing,
   interpolate,
 } from 'react-native-reanimated';
-import { useOrbitorTheme, Typography, Radius, Spacing } from '../../theme';
+import { useOrbitorTheme, Typography, Radius, Spacing, Shadows } from '../../theme';
 import { Peer } from '../../core/types';
 import { PeerAvatar } from '../common/PeerAvatar';
 
@@ -89,20 +89,19 @@ export const RadarSweep: React.FC<RadarSweepProps> = ({
       onPress={onPressRadar}
       disabled={!onPressRadar}
       style={[styles.container, { width: RADAR_SIZE, height: RADAR_SIZE }]}>
-      {/* Outer Solid Surface with Soft Subtle Border */}
+      {/* Outer Solid Surface with Soft Subtle Elevation */}
       <View
         style={[
           styles.outerRing,
           {
-            borderColor: theme.borderSubtle,
             backgroundColor: theme.surface,
           },
         ]}
       />
 
       {/* Dim Crosshair Axes */}
-      <View style={[styles.axisHorizontal, { width: RADAR_SIZE * 0.92 }]} />
-      <View style={[styles.axisVertical, { height: RADAR_SIZE * 0.92 }]} />
+      <View style={[styles.axisHorizontal, { width: RADAR_SIZE * 0.92, backgroundColor: theme.divider }]} />
+      <View style={[styles.axisVertical, { height: RADAR_SIZE * 0.92, backgroundColor: theme.divider }]} />
 
       {/* Concentric Distance Ring 1 (Outer ~25m) */}
       <View
@@ -111,7 +110,7 @@ export const RadarSweep: React.FC<RadarSweepProps> = ({
           {
             width: RADAR_SIZE * 0.78,
             height: RADAR_SIZE * 0.78,
-            borderColor: 'rgba(255, 255, 255, 0.07)',
+            borderColor: theme.divider,
           },
         ]}>
         <Text style={[styles.ringLabel, { color: theme.textTertiary }]}>25m</Text>
@@ -124,7 +123,7 @@ export const RadarSweep: React.FC<RadarSweepProps> = ({
           {
             width: RADAR_SIZE * 0.52,
             height: RADAR_SIZE * 0.52,
-            borderColor: 'rgba(255, 255, 255, 0.08)',
+            borderColor: theme.divider,
           },
         ]}>
         <Text style={[styles.ringLabel, { color: theme.textTertiary }]}>12m</Text>
@@ -137,10 +136,10 @@ export const RadarSweep: React.FC<RadarSweepProps> = ({
           {
             width: RADAR_SIZE * 0.28,
             height: RADAR_SIZE * 0.28,
-            borderColor: 'rgba(0, 194, 13, 0.18)',
+            borderColor: theme.accentCyanMuted,
           },
         ]}>
-        <Text style={[styles.ringLabel, { color: theme.accentCyan, opacity: 0.6 }]}>4m</Text>
+        <Text style={[styles.ringLabel, { color: theme.accentCyan, opacity: 0.8 }]}>4m</Text>
       </View>
 
       {/* Sweeping Beam — ONLY rendered when actively scanning */}
@@ -176,13 +175,12 @@ export const RadarSweep: React.FC<RadarSweepProps> = ({
           styles.centerNode,
           {
             backgroundColor: isScanning ? theme.accentCyan : theme.surfaceElevated,
-            borderColor: isScanning ? theme.accentCyan : theme.border,
           },
         ]}>
         <View
           style={[
             styles.centerInnerDot,
-            { backgroundColor: isScanning ? theme.background : theme.accentCyan },
+            { backgroundColor: isScanning ? '#FFFFFF' : theme.textTertiary },
           ]}
         />
       </View>
@@ -238,17 +236,16 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     borderRadius: Radius.full,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.card,
   },
   axisHorizontal: {
     position: 'absolute',
     height: StyleSheet.hairlineWidth,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
   },
   axisVertical: {
     position: 'absolute',
     width: StyleSheet.hairlineWidth,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
   },
   ring: {
     position: 'absolute',
@@ -287,8 +284,9 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
+    borderWidth: 0,
     zIndex: 10,
+    ...Shadows.subtle,
   },
   centerInnerDot: {
     width: 5,

@@ -2,7 +2,7 @@ import { useRouter, usePathname } from 'expo-router';
 import { Gesture } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 
-export const TAB_ROUTES = ['/', '/chats', '/fling', '/settings'] as const;
+export const TAB_ROUTES = ['/', '/chats', '/settings'] as const;
 
 export function useSwipeNavigation() {
   const router = useRouter();

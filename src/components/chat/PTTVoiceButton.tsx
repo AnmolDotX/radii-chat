@@ -7,17 +7,21 @@ import Animated, {
   withTiming,
   Easing,
 } from 'react-native-reanimated';
-import { useOrbitorTheme, Typography, Radius, Spacing } from '../../theme';
+import { Ionicons } from '@expo/vector-icons';
+import { useOrbitorTheme, Typography, Radius, Spacing, Shadows } from '../../theme';
+import { AudioPlayer } from '../../utils/audioPlayer';
 
 interface PTTVoiceButtonProps {
-  onSendVoice: (durationSeconds: number) => void;
+  onSendVoice: (durationSeconds: number, audioUri?: string, audioBase64?: string) => void;
+  disabled?: boolean;
 }
 
-export const PTTVoiceButton: React.FC<PTTVoiceButtonProps> = ({ onSendVoice }) => {
+export const PTTVoiceButton: React.FC<PTTVoiceButtonProps> = ({ onSendVoice, disabled = false }) => {
   const theme = useOrbitorTheme();
   const [isHolding, setIsHolding] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const timerRef = useRef<any>(null);
+  const recordSecondsRef = useRef(0);
 
   const pulse = useSharedValue(1);
 
@@ -39,23 +43,57 @@ export const PTTVoiceButton: React.FC<PTTVoiceButtonProps> = ({ onSendVoice }) =
     };
   });
 
-  const handlePressIn = () => {
-    setIsHolding(true);
-    setRecordSeconds(0);
-    timerRef.current = setInterval(() => {
-      setRecordSeconds((s) => s + 1);
-    }, 1000);
-  };
-
-  const handlePressOut = () => {
+  const finishRecording = async (seconds: number) => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    const finalDuration = Math.max(1, recordSeconds);
+    const finalDuration = Math.min(10, Math.max(1, seconds));
     setIsHolding(false);
-    onSendVoice(finalDuration);
+    setRecordSeconds(0);
+    recordSecondsRef.current = 0;
+
+    const audioResult = await AudioPlayer.stopRecording();
+    if (audioResult && (audioResult.filePath || audioResult.base64)) {
+      onSendVoice(finalDuration, audioResult.filePath, audioResult.base64);
+    }
   };
+
+  const handlePressIn = () => {
+    if (disabled) return;
+    setIsHolding(true);
+    setRecordSeconds(0);
+    recordSecondsRef.current = 0;
+
+    const recordId = `rec_${Date.now()}`;
+    AudioPlayer.startRecording(recordId).catch(() => {});
+
+    timerRef.current = setInterval(() => {
+      recordSecondsRef.current += 1;
+      const current = recordSecondsRef.current;
+      setRecordSeconds(current);
+
+      // Auto-stop and transmit at 10 seconds limit for fast radio transmission
+      if (current >= 10) {
+        finishRecording(10);
+      }
+    }, 1000);
+  };
+
+  const handlePressOut = () => {
+    if (!isHolding) return;
+    finishRecording(recordSecondsRef.current);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
+  }, []);
+
+  const formattedSec = recordSeconds < 10 ? `0${recordSeconds}` : `${recordSeconds}`;
 
   return (
     <View style={styles.container}>
@@ -63,7 +101,7 @@ export const PTTVoiceButton: React.FC<PTTVoiceButtonProps> = ({ onSendVoice }) =
         <View style={[styles.timerBadge, { backgroundColor: theme.dangerMuted }]}>
           <View style={[styles.recordingDot, { backgroundColor: theme.danger }]} />
           <Text style={[styles.timerText, { color: theme.danger }]}>
-            PTT 0:0{recordSeconds}
+            PTT 0:{formattedSec} / 0:10
           </Text>
         </View>
       )}
@@ -71,11 +109,13 @@ export const PTTVoiceButton: React.FC<PTTVoiceButtonProps> = ({ onSendVoice }) =
       <Pressable
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
+        disabled={disabled}
+        accessibilityLabel="Push to talk voice note"
         style={({ pressed }) => [
           styles.buttonWrapper,
           {
             backgroundColor: isHolding ? theme.accentCyan : theme.surfaceElevated,
-            borderColor: isHolding ? theme.accentCyan : theme.border,
+            opacity: disabled ? 0.4 : pressed ? 0.9 : 1,
             transform: [{ scale: pressed ? 0.95 : 1 }],
           },
         ]}>
@@ -88,9 +128,11 @@ export const PTTVoiceButton: React.FC<PTTVoiceButtonProps> = ({ onSendVoice }) =
             ]}
           />
         )}
-        <Text style={[styles.icon, { color: isHolding ? theme.background : theme.text }]}>
-          🎙
-        </Text>
+        <Ionicons
+          name={isHolding ? 'mic' : 'mic-outline'}
+          size={21}
+          color={isHolding ? theme.background : theme.text}
+        />
       </Pressable>
     </View>
   );
@@ -106,7 +148,8 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: Radius.full,
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Shadows.subtle,
     alignItems: 'center',
     justifyContent: 'center',
   },
