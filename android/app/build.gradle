@@ -206,3 +206,55 @@ dependencies {
         implementation jscFlavor
     }
 }
+
+// Automatically synchronize release APKs to android/release for README downloads
+tasks.register('syncReleaseApksToOuterFolder') {
+    description = "Copies generated release APKs from build outputs to android/release"
+    group = "build"
+    doLast {
+        def releaseOutputDir = file("${layout.buildDirectory.asFile.get()}/outputs/apk/release")
+        def outerReleaseDir = file("${rootDir}/release")
+
+        if (releaseOutputDir.exists()) {
+            if (!outerReleaseDir.exists()) {
+                outerReleaseDir.mkdirs()
+            }
+
+            def arm64Apk = file("${releaseOutputDir}/radii-arm64-v8a.apk")
+            if (arm64Apk.exists()) {
+                copy {
+                    from arm64Apk
+                    into outerReleaseDir
+                }
+                copy {
+                    from arm64Apk
+                    into outerReleaseDir
+                    rename { 'radii-release.apk' }
+                }
+            }
+
+            def armv7Apk = file("${releaseOutputDir}/radii-armeabi-v7a.apk")
+            if (armv7Apk.exists()) {
+                copy {
+                    from armv7Apk
+                    into outerReleaseDir
+                }
+            }
+
+            def universalApk = file("${releaseOutputDir}/radii.apk")
+            if (universalApk.exists()) {
+                copy {
+                    from universalApk
+                    into outerReleaseDir
+                }
+            }
+
+            println "[Radii Gradle] Copied latest release APKs to ${outerReleaseDir.absolutePath}"
+        }
+    }
+}
+
+tasks.matching { it.name == 'assembleRelease' }.configureEach {
+    finalizedBy('syncReleaseApksToOuterFolder')
+}
+

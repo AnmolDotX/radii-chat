@@ -782,22 +782,39 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
         }
     }
 
+    private var sharedUdpSendSocket: DatagramSocket? = null
+    private val sendSocketLock = Any()
+
+    private fun getSharedSendSocket(): DatagramSocket {
+        synchronized(sendSocketLock) {
+            var s = sharedUdpSendSocket
+            if (s == null || s.isClosed) {
+                s = DatagramSocket().apply { broadcast = true }
+                sharedUdpSendSocket = s
+            }
+            return s
+        }
+    }
+
     @ReactMethod
     fun sendUdpMessage(ipAddress: String, messageJson: String, promise: Promise) {
         thread(start = true, isDaemon = true) {
-            var socket: DatagramSocket? = null
             try {
-                socket = DatagramSocket()
+                val socket = getSharedSendSocket()
                 val bytes = messageJson.toByteArray(Charsets.UTF_8)
                 val targetAddr = InetAddress.getByName(ipAddress)
                 val packet = DatagramPacket(bytes, bytes.size, targetAddr, UDP_PORT)
-                socket.send(packet)
+                synchronized(socket) {
+                    socket.send(packet)
+                }
                 promise.resolve(true)
             } catch (e: Exception) {
                 Log.e("RadiiRadio", "sendUdpMessage error: ${e.message}")
+                synchronized(sendSocketLock) {
+                    try { sharedUdpSendSocket?.close() } catch (ex: Exception) {}
+                    sharedUdpSendSocket = null
+                }
                 promise.resolve(false)
-            } finally {
-                socket?.close()
             }
         }
     }
@@ -805,24 +822,26 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
     @ReactMethod
     fun broadcastUdpMessage(messageJson: String, promise: Promise) {
         thread(start = true, isDaemon = true) {
-            var socket: DatagramSocket? = null
             try {
-                socket = DatagramSocket()
-                socket.broadcast = true
+                val socket = getSharedSendSocket()
                 val bytes = messageJson.toByteArray(Charsets.UTF_8)
                 val broadcastTargets = getSubnetBroadcastAddresses()
-                for (target in broadcastTargets) {
-                    try {
-                        val packet = DatagramPacket(bytes, bytes.size, target, UDP_PORT)
-                        socket.send(packet)
-                    } catch (e: Exception) {}
+                synchronized(socket) {
+                    for (target in broadcastTargets) {
+                        try {
+                            val packet = DatagramPacket(bytes, bytes.size, target, UDP_PORT)
+                            socket.send(packet)
+                        } catch (e: Exception) {}
+                    }
                 }
                 promise.resolve(true)
             } catch (e: Exception) {
                 Log.e("RadiiRadio", "broadcastUdpMessage error: ${e.message}")
+                synchronized(sendSocketLock) {
+                    try { sharedUdpSendSocket?.close() } catch (ex: Exception) {}
+                    sharedUdpSendSocket = null
+                }
                 promise.resolve(false)
-            } finally {
-                socket?.close()
             }
         }
     }

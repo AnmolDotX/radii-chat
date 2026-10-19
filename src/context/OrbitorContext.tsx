@@ -270,6 +270,7 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const completedTransfersRef = useRef<Set<string>>(new Set());
   const abortedTransfersRef = useRef<Set<string>>(new Set());
   const watchdogTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const scheduleMissingChunksWatchdogRef = useRef<(transferId: string, delayMs?: number) => void>(() => {});
 
   // Initialize transport and subscriptions
   useEffect(() => {
@@ -333,11 +334,16 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
             const sanitizedMsgs: Record<string, Message[]> = {};
             Object.keys(parsedMsgs).forEach((key) => {
               if (!isCorruptGhost(key)) {
-                sanitizedMsgs[key] = parsedMsgs[key];
-                parsedMsgs[key].forEach((m) => {
+                sanitizedMsgs[key] = (parsedMsgs[key] || []).map((m) => {
                   if (m.transferId && (m.transferStatus === 'completed' || m.imageUri || m.audioUri || m.fileUri)) {
                     completedTransfersRef.current.add(m.transferId);
+                    return m;
                   }
+                  // Any transfer that was left in 'transferring' state across app restart was interrupted: mark as failed so user gets the Retry chip!
+                  if (m.transferStatus === 'transferring') {
+                    return { ...m, transferStatus: 'failed' as const };
+                  }
+                  return m;
                 });
               }
             });
@@ -1176,14 +1182,16 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
           const profile = getLocalProfile();
           const myShort = profile.id.slice(-6).toLowerCase();
-          await transportManager.sendPacket(record.senderId, {
+          const compPacket = {
             type: 'MEDIA_TRANSFER_COMPLETE',
             id: `comp_${Date.now()}`,
             transferId,
             senderId: `peer_${myShort}`,
             targetPeerId: record.senderId,
             timestamp: Date.now(),
-          }).catch(() => {});
+          };
+          transportManager.sendPacket(record.senderId, compPacket).catch(() => {});
+          transportManager.sendPacket('broadcast', compPacket).catch(() => {});
 
           // Drain outbox items for this peer
           const pendingOutbox = outbox.getItems().filter(
@@ -1195,6 +1203,90 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
             incomingPayloadsRef.current.delete(transferId);
           }, 120000);
         };
+
+        const scheduleMissingChunksWatchdog = (transferId: string, delayMs = 1500) => {
+          const existingWd = watchdogTimersRef.current.get(transferId);
+          if (existingWd) {
+            clearTimeout(existingWd);
+            watchdogTimersRef.current.delete(transferId);
+          }
+
+          const watchdogTimer = setTimeout(() => {
+            watchdogTimersRef.current.delete(transferId);
+            const currentRec = incomingPayloadsRef.current.get(transferId);
+            if (
+              !currentRec ||
+              currentRec.isCompleted ||
+              completedTransfersRef.current.has(transferId) ||
+              abortedTransfersRef.current.has(transferId)
+            ) {
+              return;
+            }
+
+            const missing: number[] = [];
+            for (let i = 0; i < currentRec.totalChunks; i++) {
+              if (!currentRec.chunks.has(i)) {
+                missing.push(i);
+              }
+            }
+
+            if (missing.length === 0) {
+              completedTransfersRef.current.add(transferId);
+              finalizeReceivedMedia(transferId);
+              return;
+            }
+
+            currentRec.retryAttempts = (currentRec.retryAttempts || 0) + 1;
+            console.log(
+              `[Media Watchdog] Transfer ${transferId} stalled at ${currentRec.chunks.size}/${currentRec.totalChunks}. Auto-requesting ${missing.length} missing chunks (attempt ${currentRec.retryAttempts}/5)`
+            );
+
+            const profile = getLocalProfile();
+            const myShort = profile.id.slice(-6).toLowerCase();
+            const isRoom = Boolean(currentRec.conversationId.startsWith('room_'));
+            const reqPacket = {
+              type: 'MEDIA_REQUEST_MISSING',
+              id: `req_missing_watchdog_${Date.now()}_${currentRec.retryAttempts}`,
+              transferId,
+              missingIndices: missing,
+              senderId: `peer_${myShort}`,
+              senderShortId: myShort,
+              targetPeerId: currentRec.senderId,
+              roomId: isRoom ? currentRec.conversationId : undefined,
+              timestamp: Date.now(),
+            };
+
+            if (isRoom) {
+              transportManager.sendPacket('broadcast', reqPacket).catch(() => {});
+            } else {
+              transportManager.sendPacket(currentRec.senderId, reqPacket).catch(() => {});
+              transportManager.sendPacket('broadcast', reqPacket).catch(() => {});
+            }
+
+            if (currentRec.retryAttempts >= 5) {
+              // After 5 attempts (~10 seconds of retries), mark message as failed so user gets prominent Retry chip
+              setMessages((prev) => {
+                const list = prev[currentRec.conversationId] || [];
+                const updated = {
+                  ...prev,
+                  [currentRec.conversationId]: list.map((m) =>
+                    m.transferId === transferId && m.transferStatus === 'transferring'
+                      ? { ...m, transferStatus: 'failed' as const }
+                      : m
+                  ),
+                };
+                persistMessages(updated);
+                return updated;
+              });
+            } else {
+              // Re-check again in 2000ms
+              scheduleMissingChunksWatchdog(transferId, 2000);
+            }
+          }, delayMs);
+
+          watchdogTimersRef.current.set(transferId, watchdogTimer);
+        };
+        scheduleMissingChunksWatchdogRef.current = scheduleMissingChunksWatchdog;
 
         // 8c. NEARBY SHARE / MEDIA TRANSFER PROTOCOL
         if (msgType === 'MEDIA_TRANSFER_REQUEST') {
@@ -1309,7 +1401,7 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
             return updated;
           });
 
-          // Stream chunks asynchronously with 45ms pacing to prevent Android RFCOMM socket buffer congestion
+          // Stream chunks asynchronously with 60ms pacing to prevent Android socket buffer congestion
           const { chunks, totalChunks, fileName, mimeType, mediaType, durationSec, targetId } = payload;
           const profile = getLocalProfile();
           const myShort = profile.id.slice(-6).toLowerCase();
@@ -1345,8 +1437,8 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 await transportManager.sendPacket(targetPeer, chunkPacket);
               }
 
-              const isComplete = i + 1 >= totalChunks;
-              const pct = isComplete ? 100 : Math.min(99, Math.round(((i + 1) / totalChunks) * 100));
+              // Keep status as 'transferring' and progress up to 99%. Wait for receiver handshake for 100%!
+              const pct = Math.min(99, Math.round(((i + 1) / totalChunks) * 99));
               setMessages((prev) => {
                 const updated: Record<string, Message[]> = {};
                 for (const key of Object.keys(prev)) {
@@ -1354,8 +1446,8 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     m.transferId === transferId
                       ? {
                           ...m,
-                          transferProgress: pct,
-                          transferStatus: isComplete ? 'completed' : 'transferring',
+                          transferProgress: Math.max(m.transferProgress || 0, pct),
+                          transferStatus: 'transferring',
                         }
                       : m
                   );
@@ -1365,7 +1457,7 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
               });
 
               if (totalChunks > 1) {
-                await new Promise((res) => setTimeout(res, 45));
+                await new Promise((res) => setTimeout(res, 60));
               }
             }
 
@@ -1391,6 +1483,7 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 transportManager.sendPacket('broadcast', endPacket).catch(() => {});
               } else {
                 transportManager.sendPacket(targetPeer, endPacket).catch(() => {});
+                transportManager.sendPacket('broadcast', endPacket).catch(() => {});
               }
               if (burst < 2) {
                 await new Promise((res) => setTimeout(res, 120));
@@ -1403,11 +1496,6 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (msgType === 'MEDIA_STREAM_END') {
           const transferId = incoming.transferId;
           if (!transferId) return;
-          const wd = watchdogTimersRef.current.get(transferId);
-          if (wd) {
-            clearTimeout(wd);
-            watchdogTimersRef.current.delete(transferId);
-          }
           if (completedTransfersRef.current.has(transferId)) {
             return;
           }
@@ -1444,7 +1532,10 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
               transportManager.sendPacket('broadcast', reqPacket).catch(() => {});
             } else {
               transportManager.sendPacket(canonicalSenderId, reqPacket).catch(() => {});
+              transportManager.sendPacket('broadcast', reqPacket).catch(() => {});
             }
+            // Keep watchdog actively running so it recovers if retry packet drops!
+            scheduleMissingChunksWatchdog(transferId, 1500);
           } else {
             completedTransfersRef.current.add(transferId);
             finalizeReceivedMedia(transferId);
@@ -1457,16 +1548,59 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const missingIndices = incoming.missingIndices || [];
           if (!transferId || missingIndices.length === 0) return;
           if (abortedTransfersRef.current.has(transferId)) return;
-          const payload = outgoingPayloadsRef.current.get(transferId);
-          if (!payload) return;
-
-          const { chunks, totalChunks, fileName, mimeType, mediaType, durationSec, targetId } = payload;
-          const profile = getLocalProfile();
-          const myShort = profile.id.slice(-6).toLowerCase();
-          const targetPeer = incoming.senderId || targetId;
-          const isRoomTransfer = Boolean(incoming.roomId || (targetId && targetId.startsWith('room_')));
 
           (async () => {
+            let payload = outgoingPayloadsRef.current.get(transferId);
+
+            // If payload not in memory (e.g. app reloaded), reconstruct from message URI attachment!
+            if (!payload) {
+              let foundMsg: Message | undefined;
+              for (const key of Object.keys(messagesRef.current)) {
+                const m = messagesRef.current[key]?.find((msg) => msg.transferId === transferId);
+                if (m) {
+                  foundMsg = m;
+                  break;
+                }
+              }
+              if (foundMsg) {
+                const uri = foundMsg.fileUri || foundMsg.imageUri || foundMsg.audioUri;
+                if (uri) {
+                  try {
+                    const fileInfo = await readMediaBase64(uri);
+                    if (fileInfo?.base64) {
+                      const CHUNK_SIZE = 4096;
+                      const chunks: string[] = [];
+                      for (let c = 0; c < fileInfo.base64.length; c += CHUNK_SIZE) {
+                        chunks.push(fileInfo.base64.slice(c, c + CHUNK_SIZE));
+                      }
+                      payload = {
+                        base64: fileInfo.base64,
+                        fileName: foundMsg.fileName || 'file.dat',
+                        mimeType: foundMsg.mimeType || 'application/octet-stream',
+                        totalChunks: chunks.length,
+                        chunks,
+                        mediaType: foundMsg.transferType || (foundMsg.isVoice ? 'voice' : foundMsg.isFile ? 'file' : 'image'),
+                        durationSec: foundMsg.audioDurationSeconds,
+                        targetId: incoming.senderId || canonicalSenderId,
+                        roomId: foundMsg.roomId,
+                      };
+                      outgoingPayloadsRef.current.set(transferId, payload);
+                    }
+                  } catch (e) {
+                    console.warn('[OrbitorContext] Could not reconstruct payload for retry:', e);
+                  }
+                }
+              }
+            }
+
+            if (!payload) return;
+
+            const { chunks, totalChunks, fileName, mimeType, mediaType, durationSec, targetId } = payload;
+            const profile = getLocalProfile();
+            const myShort = profile.id.slice(-6).toLowerCase();
+            const targetPeer = incoming.senderId || targetId;
+            const isRoomTransfer = Boolean(incoming.roomId || (targetId && targetId.startsWith('room_')));
+
             for (const idx of missingIndices) {
               if (abortedTransfersRef.current.has(transferId)) break;
               if (idx < chunks.length) {
@@ -1491,8 +1625,9 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
                   await transportManager.sendPacket('broadcast', chunkPacket);
                 } else {
                   await transportManager.sendPacket(targetPeer, chunkPacket);
+                  await transportManager.sendPacket('broadcast', chunkPacket);
                 }
-                await new Promise((res) => setTimeout(res, 45));
+                await new Promise((res) => setTimeout(res, 60));
               }
             }
 
@@ -1516,6 +1651,7 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 transportManager.sendPacket('broadcast', endPacket).catch(() => {});
               } else {
                 transportManager.sendPacket(targetPeer, endPacket).catch(() => {});
+                transportManager.sendPacket('broadcast', endPacket).catch(() => {});
               }
               if (b < 1) await new Promise((res) => setTimeout(res, 120));
             }
@@ -1532,14 +1668,16 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
           if (completedTransfersRef.current.has(transferId)) {
             const profile = getLocalProfile();
             const myShort = profile.id.slice(-6).toLowerCase();
-            transportManager.sendPacket(canonicalSenderId, {
+            const compAckPacket = {
               type: 'MEDIA_TRANSFER_COMPLETE',
               id: `comp_ack_${Date.now()}`,
               transferId,
               senderId: `peer_${myShort}`,
               targetPeerId: canonicalSenderId,
               timestamp: Date.now(),
-            }).catch(() => {});
+            };
+            transportManager.sendPacket(canonicalSenderId, compAckPacket).catch(() => {});
+            transportManager.sendPacket('broadcast', compAckPacket).catch(() => {});
             return;
           }
 
@@ -1596,80 +1734,17 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
             return updated;
           });
 
-          // Reset inactivity watchdog timer
-          const existingWd = watchdogTimersRef.current.get(transferId);
-          if (existingWd) {
-            clearTimeout(existingWd);
-            watchdogTimersRef.current.delete(transferId);
-          }
-
           if (isDone) {
+            const wd = watchdogTimersRef.current.get(transferId);
+            if (wd) {
+              clearTimeout(wd);
+              watchdogTimersRef.current.delete(transferId);
+            }
             completedTransfersRef.current.add(transferId);
             finalizeReceivedMedia(transferId);
           } else {
-            // Watchdog: If transfer is stuck and no new chunks arrive in 3.0s, auto-request missing chunks!
-            const watchdogTimer = setTimeout(() => {
-              const currentRec = incomingPayloadsRef.current.get(transferId);
-              if (
-                !currentRec ||
-                currentRec.isCompleted ||
-                completedTransfersRef.current.has(transferId) ||
-                abortedTransfersRef.current.has(transferId)
-              ) {
-                return;
-              }
-              const missing: number[] = [];
-              for (let i = 0; i < currentRec.totalChunks; i++) {
-                if (!currentRec.chunks.has(i)) {
-                  missing.push(i);
-                }
-              }
-
-              if (missing.length > 0) {
-                currentRec.retryAttempts = (currentRec.retryAttempts || 0) + 1;
-                console.log(
-                  `[Media Watchdog] Transfer ${transferId} stalled at ${currentRec.chunks.size}/${currentRec.totalChunks}. Auto-requesting ${missing.length} missing chunks (attempt ${currentRec.retryAttempts})`
-                );
-
-                const profile = getLocalProfile();
-                const myShort = profile.id.slice(-6).toLowerCase();
-                const reqPacket = {
-                  type: 'MEDIA_REQUEST_MISSING',
-                  id: `req_missing_watchdog_${Date.now()}`,
-                  transferId,
-                  missingIndices: missing,
-                  senderId: `peer_${myShort}`,
-                  senderShortId: myShort,
-                  targetPeerId: currentRec.senderId,
-                  roomId: currentRec.conversationId.startsWith('room_') ? currentRec.conversationId : undefined,
-                  timestamp: Date.now(),
-                };
-
-                if (currentRec.conversationId.startsWith('room_')) {
-                  transportManager.sendPacket('broadcast', reqPacket).catch(() => {});
-                } else {
-                  transportManager.sendPacket(currentRec.senderId, reqPacket).catch(() => {});
-                }
-
-                if (currentRec.retryAttempts >= 4) {
-                  // After 4 attempts, mark message as failed so the user gets a prominent Retry button
-                  setMessages((prev) => {
-                    const list = prev[currentRec.conversationId] || [];
-                    const updated = {
-                      ...prev,
-                      [currentRec.conversationId]: list.map((m) =>
-                        m.transferId === transferId && m.transferStatus === 'transferring'
-                          ? { ...m, transferStatus: 'failed' as const }
-                          : m
-                      ),
-                    };
-                    persistMessages(updated);
-                    return updated;
-                  });
-                }
-              }
-            }, 3000);
-            watchdogTimersRef.current.set(transferId, watchdogTimer);
+            // Keep watchdog active and rescheduling
+            scheduleMissingChunksWatchdog(transferId, 2500);
           }
           return;
         }
@@ -2413,6 +2488,7 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
         transportManager.sendPacket('broadcast', requestPacket).catch(() => {});
       } else {
         transportManager.sendPacket(canonicalId, requestPacket).catch(() => {});
+        transportManager.sendPacket('broadcast', requestPacket).catch(() => {});
       }
 
       return true;
@@ -2634,16 +2710,15 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 await transportManager.sendPacket(targetPeer, chunkPacket);
               }
 
-              const isComplete = i + 1 >= totalChunks;
-              const pct = isComplete ? 100 : Math.min(99, Math.round(((i + 1) / totalChunks) * 100));
+              const pct = Math.min(99, Math.round(((i + 1) / totalChunks) * 99));
               setMessages((prev) => {
                 const list = prev[conversationId] || [];
                 const updatedList = list.map((m) =>
                   m.transferId === transferId
                     ? {
                         ...m,
-                        transferProgress: pct,
-                        transferStatus: isComplete ? ('completed' as const) : ('transferring' as const),
+                        transferProgress: Math.max(m.transferProgress || 0, pct),
+                        transferStatus: 'transferring' as const,
                       }
                     : m
                 );
@@ -2653,7 +2728,7 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
               });
 
               if (totalChunks > 1) {
-                await new Promise((res) => setTimeout(res, 45));
+                await new Promise((res) => setTimeout(res, 60));
               }
             }
 
@@ -2676,6 +2751,7 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 transportManager.sendPacket('broadcast', endPacket).catch(() => {});
               } else {
                 transportManager.sendPacket(targetPeer, endPacket).catch(() => {});
+                transportManager.sendPacket('broadcast', endPacket).catch(() => {});
               }
               if (b < 2) await new Promise((res) => setTimeout(res, 120));
             }
@@ -2702,6 +2778,7 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
             transportManager.sendPacket('broadcast', requestPacket).catch(() => {});
           } else {
             transportManager.sendPacket(targetPeerId, requestPacket).catch(() => {});
+            transportManager.sendPacket('broadcast', requestPacket).catch(() => {});
           }
         }
       } else {
@@ -2741,7 +2818,9 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
               transportManager.sendPacket('broadcast', reqPacket).catch(() => {});
             } else {
               transportManager.sendPacket(record.senderId, reqPacket).catch(() => {});
+              transportManager.sendPacket('broadcast', reqPacket).catch(() => {});
             }
+            scheduleMissingChunksWatchdogRef.current(transferId, 1500);
             return;
           }
         }
@@ -2761,7 +2840,9 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
           transportManager.sendPacket('broadcast', acceptPacket).catch(() => {});
         } else {
           transportManager.sendPacket(targetPeerId, acceptPacket).catch(() => {});
+          transportManager.sendPacket('broadcast', acceptPacket).catch(() => {});
         }
+        scheduleMissingChunksWatchdogRef.current(transferId, 2500);
       }
     },
     [persistMessages]

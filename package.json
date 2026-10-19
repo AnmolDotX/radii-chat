@@ -42,7 +42,8 @@
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android",
     "android:device": "expo run:android --device",
-    "build:apk": "cd android && ./gradlew assembleRelease",
+    "build:apk": "cd android && ./gradlew assembleRelease && node ../scripts/copy-release-apk.js",
+    "copy:apk": "node ./scripts/copy-release-apk.js",
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint"

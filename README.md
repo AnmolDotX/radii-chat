@@ -127,21 +127,28 @@ This builds and installs the native Android app package directly onto your phone
 
 ### 5. Build a Release APK Locally
 
-To build a standalone production release APK without a dev client:
+To build a standalone production release APK:
 
 ```bash
-cd android
-./gradlew assembleRelease
+pnpm run build:apk
+# or manually:
+cd android && ./gradlew assembleRelease
 ```
 
-The output APKs will be generated in:
+The APKs are generated in `android/app/build/outputs/apk/release/` and **automatically synchronized** to the repository's download directory (`android/release/`):
 
 ```
-android/app/build/outputs/apk/release/
-├── radii-arm64-v8a.apk     # 64-bit devices (modern phones)
+android/release/
+├── radii-release.apk       # Recommended ARM64-v8a build (direct download link in README)
+├── radii-arm64-v8a.apk     # 64-bit devices (modern Android phones)
 ├── radii-armeabi-v7a.apk   # 32-bit devices (legacy phones)
 └── radii.apk               # Universal fat APK
 ```
+
+> **Note**: You can also re-sync the latest build outputs to `android/release/` at any time by running:
+> ```bash
+> pnpm run copy:apk
+> ```
 
 ---
 

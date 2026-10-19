@@ -30,6 +30,10 @@ export class NativeRadioTransport implements ITransport {
   private msgSubscription: any = null;
 
   private discoveredPeers: Map<string, Peer> = new Map();
+  private persistentPeerCache: Map<
+    string,
+    { ipAddress?: string; macAddress?: string; name?: string; lastSeen: number }
+  > = new Map();
   private pruneTimer: any = null;
 
   constructor() {
@@ -52,6 +56,27 @@ export class NativeRadioTransport implements ITransport {
       ) {
         return peer;
       }
+    }
+    // Fallback: Check persistent peer cache for last-known addresses even if evicted from UI
+    const cached =
+      this.persistentPeerCache.get(clean) ||
+      this.persistentPeerCache.get(`peer_${shortId}`) ||
+      this.persistentPeerCache.get(shortId);
+    if (cached && (cached.ipAddress || cached.macAddress)) {
+      return {
+        id: `peer_${shortId}`,
+        name: cached.name || `Radii·${shortId}`,
+        platform: 'android',
+        activeTransport: cached.ipAddress ? 'nearby' : 'ble',
+        availableTransports: [cached.ipAddress ? 'nearby' : 'ble'],
+        avatarSeed: cached.name || shortId,
+        rssi: -65,
+        distanceBracket: 'immediate',
+        lastSeen: cached.lastSeen,
+        isPaired: true,
+        ipAddress: cached.ipAddress,
+        macAddress: cached.macAddress,
+      };
     }
     return undefined;
   }
@@ -122,6 +147,16 @@ export class NativeRadioTransport implements ITransport {
         };
 
         this.discoveredPeers.set(canonicalId, mergedPeer);
+        if (mergedPeer.ipAddress || mergedPeer.macAddress) {
+          const cacheRecord = {
+            ipAddress: mergedPeer.ipAddress,
+            macAddress: mergedPeer.macAddress,
+            name: mergedPeer.name,
+            lastSeen: Date.now(),
+          };
+          this.persistentPeerCache.set(canonicalId, cacheRecord);
+          this.persistentPeerCache.set(shortId, cacheRecord);
+        }
         this.peerDiscoveredListeners.forEach((cb) => cb(mergedPeer));
       });
 
@@ -200,6 +235,20 @@ export class NativeRadioTransport implements ITransport {
         };
 
         this.messageListeners.forEach((cb) => cb(msg));
+
+        if (rawMsg.ipAddress || rawMsg.macAddress || (rawMsg as any).senderIp) {
+          const ip = rawMsg.ipAddress || (rawMsg as any).senderIp;
+          const mac = rawMsg.macAddress;
+          const prev = this.persistentPeerCache.get(canonicalSenderId);
+          const cacheRecord = {
+            ipAddress: ip || prev?.ipAddress,
+            macAddress: mac || prev?.macAddress,
+            name: rawMsg.senderName || prev?.name,
+            lastSeen: Date.now(),
+          };
+          this.persistentPeerCache.set(canonicalSenderId, cacheRecord);
+          this.persistentPeerCache.set(senderShortId, cacheRecord);
+        }
       });
     }
 
@@ -343,10 +392,21 @@ export class NativeRadioTransport implements ITransport {
         } catch (e) {}
       }
 
-      // 3. Subnet Broadcast on Local Wi-Fi / Hotspot for rooms
-      if (isRoomOrBroadcast && RadiiNativeRadio?.broadcastUdpMessage) {
+      // 3. Subnet Broadcast on Local Wi-Fi / Hotspot for rooms or media repair/control packets
+      const isMediaControl = Boolean(
+        packet?.type === 'MEDIA_REQUEST_MISSING' ||
+        packet?.type === 'MEDIA_STREAM_END' ||
+        packet?.type === 'MEDIA_TRANSFER_ACCEPT' ||
+        packet?.type === 'MEDIA_TRANSFER_COMPLETE' ||
+        packet?.type === 'MEDIA_TRANSFER_REQUEST' ||
+        packet?.type === 'MEDIA_TRANSFER_REJECT' ||
+        packet?.type === 'MEDIA_TRANSFER_CANCEL'
+      );
+
+      if ((isRoomOrBroadcast || isMediaControl) && RadiiNativeRadio?.broadcastUdpMessage) {
         try {
           RadiiNativeRadio.broadcastUdpMessage(jsonString);
+          if (isMediaControl) delivered = true;
         } catch (e) {}
       }
 
@@ -371,6 +431,14 @@ export class NativeRadioTransport implements ITransport {
         try {
           const ok = await RadiiNativeRadio.sendBleMessage(peer.macAddress, jsonString);
           if (ok) delivered = true;
+        } catch (e) {}
+      }
+
+      // 7. Ultimate Subnet UDP Fallback if still undelivered
+      if (!delivered && RadiiNativeRadio?.broadcastUdpMessage) {
+        try {
+          RadiiNativeRadio.broadcastUdpMessage(jsonString);
+          delivered = true;
         } catch (e) {}
       }
 
