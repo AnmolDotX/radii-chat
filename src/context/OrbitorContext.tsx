@@ -556,20 +556,14 @@ export const OrbitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
         // 1. INCOMING CONNECTION REQUEST
         if (msgType === 'CONNECTION_REQUEST') {
-          const profile = getLocalProfile();
-          const myShortId = profile.id.slice(-6).toLowerCase();
-          const targetShortId = (incoming.targetPeerId || '').slice(-6).toLowerCase();
-
-          if (!targetShortId || targetShortId === myShortId) {
-            setIncomingRequest({
-              id: incoming.id,
-              peerId: canonicalSenderId,
-              peerName: incoming.senderName,
-              peerDevice: incoming.senderDevice || 'Nearby Device',
-              verificationCode: incoming.verificationCode || '4829',
-              transport: incoming.transport === 'nearby' ? 'nearby' : 'ble',
-            });
-          }
+          setIncomingRequest({
+            id: incoming.id,
+            peerId: canonicalSenderId,
+            peerName: incoming.senderName,
+            peerDevice: incoming.senderDevice || 'Nearby Device',
+            verificationCode: incoming.verificationCode || '4829',
+            transport: 'nearby',
+          });
           return;
         }
 

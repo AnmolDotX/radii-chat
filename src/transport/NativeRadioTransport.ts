@@ -417,27 +417,33 @@ export class NativeRadioTransport implements ITransport {
         } catch (e) {}
       }
 
-      // 4. Fast-Path: Prioritize BLE GATT immediately for connection handshakes and small control packets (<= 500 bytes)
-      // BLE GATT delivers directly to the peer's random BLE address in ~50ms, bypassing the blocking 30s RFCOMM failure
-      if ((isConnectionHandshake || isRoomOrBroadcast || jsonString.length <= 500) && peer?.macAddress && RadiiNativeRadio?.sendBleMessage) {
+      // 4. Connection Handshakes (REQUEST/ACCEPTED/DECLINED/CANCEL): Dual-dispatch across all radio channels
+      if (isConnectionHandshake && peer?.macAddress) {
+        if (RadiiNativeRadio?.sendBleMessage) {
+          RadiiNativeRadio.sendBleMessage(peer.macAddress, jsonString).then((ok: boolean) => {
+            if (ok) delivered = true;
+          }).catch(() => {});
+        }
+        if (RadiiNativeRadio?.sendBluetoothMessage) {
+          try {
+            const ok = await RadiiNativeRadio.sendBluetoothMessage(peer.macAddress, jsonString);
+            if (ok) delivered = true;
+          } catch (e) {}
+        }
+      }
+
+      // 5. Standard unicast packets: BLE GATT for small payloads (<= 500 bytes)
+      if (!delivered && !isConnectionHandshake && peer?.macAddress && jsonString.length <= 500 && RadiiNativeRadio?.sendBleMessage) {
         try {
           const ok = await RadiiNativeRadio.sendBleMessage(peer.macAddress, jsonString);
           if (ok) delivered = true;
         } catch (e) {}
       }
 
-      // 5. High-Bandwidth RFCOMM Stream (Bluetooth Classic) — for payloads > 500 bytes (e.g. media chunks)
-      if (!delivered && peer?.macAddress && RadiiNativeRadio?.sendBluetoothMessage) {
+      // 6. High-Bandwidth RFCOMM Stream (Bluetooth Classic) — for media chunks or fallback
+      if (!delivered && !isConnectionHandshake && peer?.macAddress && RadiiNativeRadio?.sendBluetoothMessage) {
         try {
           const ok = await RadiiNativeRadio.sendBluetoothMessage(peer.macAddress, jsonString);
-          if (ok) delivered = true;
-        } catch (e) {}
-      }
-
-      // 6. Fallback BLE GATT if RFCOMM was not delivered
-      if (!delivered && peer?.macAddress && jsonString.length <= 500 && RadiiNativeRadio?.sendBleMessage) {
-        try {
-          const ok = await RadiiNativeRadio.sendBleMessage(peer.macAddress, jsonString);
           if (ok) delivered = true;
         } catch (e) {}
       }

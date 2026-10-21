@@ -43,6 +43,7 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.EOFException
 import java.io.IOException
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.ConcurrentHashMap
 import android.app.Activity
 import java.io.File
@@ -377,11 +378,18 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
         }
     }
 
+    private val gattWriteBuffers = ConcurrentHashMap<String, ByteArrayOutputStream>()
+
     private fun startGattServer() {
         if (gattServer != null) return
         try {
             val bm = reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager ?: return
             val callback = object : BluetoothGattServerCallback() {
+                override fun onMtuChanged(device: BluetoothDevice?, mtu: Int) {
+                    super.onMtuChanged(device, mtu)
+                    Log.d("RadiiRadio", "GATT Server MTU negotiated: $mtu for ${device?.address}")
+                }
+
                 override fun onCharacteristicWriteRequest(
                     device: BluetoothDevice?,
                     requestId: Int,
@@ -395,9 +403,30 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
                     if (responseNeeded && device != null) {
                         gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value)
                     }
-                    if (value != null && value.isNotEmpty()) {
+                    if (value == null || value.isEmpty()) return
+
+                    val devAddr = device?.address ?: "unknown"
+                    if (preparedWrite) {
+                        // Long write / execute write buffer for payloads exceeding standard ATT MTU
+                        val stream = gattWriteBuffers.getOrPut(devAddr) { ByteArrayOutputStream() }
+                        stream.write(value)
+                    } else {
+                        // Unicast payload received directly over radio
                         val rawText = String(value, Charsets.UTF_8)
-                        dispatchIncomingMessage(rawText, "ble")
+                        dispatchIncomingMessage(rawText, "nearby")
+                    }
+                }
+
+                override fun onExecuteWrite(device: BluetoothDevice?, requestId: Int, execute: Boolean) {
+                    super.onExecuteWrite(device, requestId, execute)
+                    if (device != null) {
+                        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+                        val devAddr = device.address
+                        val stream = gattWriteBuffers.remove(devAddr)
+                        if (execute && stream != null) {
+                            val rawText = stream.toString("UTF-8")
+                            dispatchIncomingMessage(rawText, "nearby")
+                        }
                     }
                 }
             }
@@ -585,13 +614,19 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
             val isRoom = json.has("roomId") || json.has("roomCode") ||
                          json.optString("roomId").isNotEmpty() || json.optString("roomCode").isNotEmpty()
 
-            // If a specific target is set and does not match our device, discard (unless it's a room broadcast)
-            if (!isRoom && targetShortId.isNotEmpty() && myShortId.isNotEmpty() && targetShortId != myShortId) {
+            val canonicalSenderId = "peer_$senderShortId"
+            val msgType = json.optString("type", "CHAT_MSG")
+            val isConnectionHandshake = msgType.startsWith("CONNECTION_")
+
+            // STRICT RULE: Only filter target mismatches for UDP subnet broadcasts.
+            // NEVER discard direct BLE/RFCOMM socket packets or connection handshakes!
+            if (!isRoom && !isConnectionHandshake && transport == "udp_broadcast" && targetShortId.isNotEmpty() && myShortId.isNotEmpty() && targetShortId != myShortId) {
                 return
             }
 
-            val canonicalSenderId = "peer_$senderShortId"
-            val msgType = json.optString("type", "CHAT_MSG")
+            // Always present direct radio connections as "nearby"
+            val rawTransport = json.optString("transport").ifEmpty { transport }
+            val effectiveTransport = if (rawTransport == "ble" || rawTransport.isEmpty()) "nearby" else rawTransport
 
             val map = Arguments.createMap().apply {
                 putString("id", json.optString("id", UUID.randomUUID().toString()))
@@ -608,7 +643,7 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
                 putString("senderDevice", json.optString("senderDevice", ""))
                 putString("ackMessageId", json.optString("ackMessageId", ""))
                 putDouble("timestamp", json.optDouble("timestamp", System.currentTimeMillis().toDouble()))
-                putString("transport", transport)
+                putString("transport", effectiveTransport)
                 putString("status", "delivered")
                 putBoolean("isMe", false)
 
@@ -751,7 +786,10 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
                     override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
                         if (newState == BluetoothGatt.STATE_CONNECTED) {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                                gatt?.requestMtu(512)
+                                val ok = gatt?.requestMtu(512) ?: false
+                                if (!ok) {
+                                    gatt?.discoverServices()
+                                }
                             } else {
                                 gatt?.discoverServices()
                             }
@@ -815,10 +853,22 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
                     }
                 }
 
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     device.connectGatt(reactContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
                 } else {
                     device.connectGatt(reactContext, false, gattCallback)
+                }
+
+                // 4-second watchdog timer in case peripheral hangs
+                thread {
+                    try {
+                        Thread.sleep(4000)
+                        if (!resolved) {
+                            resolved = true
+                            try { gatt?.disconnect(); gatt?.close() } catch (e: Exception) {}
+                            promise.resolve(false)
+                        }
+                    } catch (e: Exception) {}
                 }
             } catch (e: Exception) {
                 Log.e("RadiiRadio", "sendBleMessage error: ${e.message}")
