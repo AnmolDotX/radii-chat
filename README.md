@@ -111,44 +111,93 @@ pnpm install
 
 ### 3. Start the Metro Development Server
 
+For active JavaScript/TypeScript and UI development with Fast Refresh:
+
 ```bash
 pnpm run start
 ```
 
-### 4. Run on a Connected Android Device
+Press `a` in the terminal to launch on a connected Android phone or emulator.
 
-Ensure your phone is connected via USB and verified with `adb devices`:
+### 4. Run on a Connected Android Device (Debug Build)
+
+When modifying native Kotlin code (`RadiiNativeRadioModule.kt`) or testing real radio hardware (Bluetooth & Wi-Fi Direct):
 
 ```bash
-npx expo run:android
+pnpm run android:device
 ```
 
-This builds and installs the native Android app package directly onto your phone.
+This compiles the native debug APK in ~20 seconds, installs it via ADB, and immediately connects to the Metro bundler.
 
-### 5. Build a Release APK Locally
+---
 
-To build a standalone production release APK:
+## 🚀 Development & Release Lifecycle
+
+Until Radii is deployed on the Google Play Store, releases are distributed directly via GitHub Releases and the official static landing page.
+
+```
+┌─────────────────────────┐       ┌─────────────────────────┐       ┌─────────────────────────┐
+│ 1. Daily Development    │  ───> │ 2. Build Release APK    │  ───> │ 3. Tag & Publish        │
+│                         │       │                         │       │                         │
+│ • pnpm run android:device│       │ • pnpm run build:apk    │       │ • git tag v1.0.x        │
+│ • Fast Refresh & Metro  │       │   <version>             │       │ • git push origin v1.0.x│
+│ • Standard git commits  │       │ • Outputs to            │       │ • GitHub Release created│
+│                         │       │   android/release/      │       │   in ~8s with APKs      │
+└─────────────────────────┘       └─────────────────────────┘       └─────────────────────────┘
+```
+
+### Phase 1: Daily Development & Code Commits
+
+For everyday feature development, bug fixes, and refactoring:
+1. Run `pnpm run android:device` to build and test on your physical phone.
+2. Code your changes with instant Fast Refresh.
+3. Commit and push your code to `main` normally:
+   ```bash
+   git add .
+   git commit -m "feat: description of changes"
+   git push origin main
+   ```
+
+### Phase 2: Building a Production Release APK Locally
+
+We build release APKs **locally** rather than on cloud CI because local Apple Silicon / workstation hardware compiles in **~28 seconds**, avoiding CI runner queues and 10+ minute build limits:
 
 ```bash
+# Build with a specific version name:
+pnpm run build:apk 1.0.2
+
+# Or build using package.json version:
 pnpm run build:apk
-# or manually:
-cd android && ./gradlew assembleRelease
 ```
 
-The APKs are generated in `android/app/build/outputs/apk/release/` and **automatically synchronized** to the repository's download directory (`android/release/`):
+This command automatically:
+1. Compiles the native production release binaries via Gradle with `versionName` and auto-incremented `versionCode`.
+2. Synchronizes the output APKs to the repository's `android/release/` folder:
+   - `radii-arm64-v8a.apk` (46 MB — modern 64-bit phones, recommended)
+   - `radii-release.apk` (46 MB — primary README & landing page link)
+   - `radii-armeabi-v7a.apk` (39 MB — legacy 32-bit devices)
+3. Excludes the 100MB+ universal fat APK so pushes never exceed GitHub's 100 MB file limit.
 
-```
-android/release/
-├── radii-release.apk       # Recommended ARM64-v8a build (direct download link in README)
-├── radii-arm64-v8a.apk     # 64-bit devices (modern Android phones)
-├── radii-armeabi-v7a.apk   # 32-bit devices (legacy phones)
-└── radii.apk               # Universal fat APK
+### Phase 3: Publishing a Permanent GitHub Release
+
+To publish an official release accessible by users and the landing page:
+
+```bash
+# 1. Commit and push the newly generated release APKs to main
+git add .
+git commit -m "release: v1.0.2"
+git push origin main
+
+# 2. Tag the release and push the tag
+git tag v1.0.2
+git push origin v1.0.2
 ```
 
-> **Note**: You can also re-sync the latest build outputs to `android/release/` at any time by running:
-> ```bash
-> pnpm run copy:apk
-> ```
+**What happens automatically in GitHub Actions:**
+- The tag triggers [`.github/workflows/build-release-apk.yml`](file:///.github/workflows/build-release-apk.yml).
+- Because the APKs are already built and committed, GitHub Actions **does NOT recompile** on CI.
+- In **~8 seconds**, GitHub automatically creates the **v1.0.2 Release**, attaches the APKs permanently, and generates release notes from your commits.
+- Users and the landing page can immediately download the updated release binaries.
 
 ---
 

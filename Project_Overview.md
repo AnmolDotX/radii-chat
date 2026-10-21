@@ -831,29 +831,87 @@ Kotlin BLE Scanner detects peer's advertisement packet -> `onPeerDiscovered`
 - **Android Studio**: SDK Platform 34 / 35, Build-Tools, and Android NDK installed.
 - **Physical Android Phone**: **Crucial Requirement**: Emulators in Android Studio **do not have real Bluetooth or Wi-Fi Direct hardware**. You must use a physical Android phone with USB Debugging enabled.
 
-### Common Commands
+### Common Development & Build Commands
 
 ```bash
 # 1. Install all dependencies
 pnpm install
 
-# 2. Start Metro Development Server (with dev client flag)
+# 2. Start Metro Development Server (with Fast Refresh)
 pnpm run start
+# Press 'a' to open on connected Android device
 
-# 3. Compile native Kotlin code and install debug APK to connected phone
-npx expo run:android
+# 3. Compile native Kotlin code and install debug build to connected phone
+pnpm run android:device
+# (or: npx expo run:android)
 
-# 4. Compile a standalone release APK locally
-pnpm run build:apk
-# (This runs `cd android && ./gradlew assembleRelease` and automatically copies
-#  the output APK to android/release/radii-release.apk)
+# 4. Compile a standalone release APK locally with specific version
+pnpm run build:apk 1.0.2
 
 # 5. Typecheck TypeScript code
-npx tsc --noEmit
+pnpm tsc --noEmit
 
 # 6. Check for dependency/SDK issues
 npx expo-doctor
 ```
+
+---
+
+### The Development, Build & Deployment Lifecycle (Pre-PlayStore)
+
+Until Radii is deployed on the Google Play Store, releases are distributed directly via GitHub Releases and the static landing page.
+
+```
+┌─────────────────────────────────┐       ┌─────────────────────────────────┐       ┌─────────────────────────────────┐
+│ 1. Daily Development (Metro)    │  ───> │ 2. Local Release Build (Gradle) │  ───> │ 3. Tag & GitHub Release Publish │
+│                                 │       │                                 │       │                                 │
+│ • pnpm run android:device        │       │ • pnpm run build:apk <version>  │       │ • git tag v1.0.x                │
+│ • Fast Refresh & live debug     │       │ • Outputs to android/release/   │       │ • git push origin v1.0.x        │
+│ • git commit & push to main     │       │ • Auto-increments versionCode   │       │ • CI attaches APKs in ~8 sec    │
+└─────────────────────────────────┘       └─────────────────────────────────┘       └─────────────────────────────────┘
+```
+
+#### Phase 1: Daily Development & Metro Process
+1. Connect physical Android phone with USB debugging enabled (`adb devices`).
+2. Run `pnpm run android:device` to build and deploy the debug APK.
+3. Keep the Metro bundler running (`pnpm run start`) for instantaneous Fast Refresh as you modify UI components and context logic.
+4. Normal code edits follow standard git workflow:
+   ```bash
+   git add .
+   git commit -m "feat: your feature"
+   git push origin main
+   ```
+
+#### Phase 2: Local Release Build Process
+Compiling React Native with Android NDK on cloud CI free runners takes 10+ minutes and hits resource limits. Radii builds production binaries **locally in ~28 seconds**:
+1. Run the build script with the desired semver:
+   ```bash
+   pnpm run build:apk 1.0.2
+   ```
+2. The script triggers Gradle with dynamic `-PversionName=1.0.2` and automatically derives `-PversionCode`.
+3. Output APKs are automatically filtered and copied into `android/release/`:
+   - `radii-arm64-v8a.apk` (46 MB — 64-bit modern devices)
+   - `radii-release.apk` (46 MB — primary release distribution)
+   - `radii-armeabi-v7a.apk` (39 MB — 32-bit legacy devices)
+   *(The 100MB+ universal fat APK is automatically omitted to keep all files below GitHub's 100MB commit ceiling).*
+
+#### Phase 3: Release & Deployment Process (Tagging)
+To publish an official downloadable release:
+```bash
+# 1. Stage and commit the updated code and release APKs
+git add .
+git commit -m "release: v1.0.2"
+git push origin main
+
+# 2. Create the semver tag and push it to GitHub
+git tag v1.0.2
+git push origin v1.0.2
+```
+
+**Automated CI Deployment:**
+- GitHub Actions detects the `v*` tag and runs `.github/workflows/build-release-apk.yml`.
+- Because the binaries are already committed locally in `android/release/`, **no cloud build is needed**.
+- Within **~8 seconds**, GitHub automatically creates the release on GitHub Releases, generates release notes from your commits, and permanently hosts the APK files for users and the landing page to download.
 
 ---
 
