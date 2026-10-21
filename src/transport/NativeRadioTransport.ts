@@ -419,15 +419,18 @@ export class NativeRadioTransport implements ITransport {
 
       // 4. Connection Handshakes (REQUEST/ACCEPTED/DECLINED/CANCEL): Dual-dispatch across all radio channels
       if (isConnectionHandshake && peer?.macAddress) {
+        console.log('[NativeRadioTransport] Handshake dispatching to', peer.macAddress, 'type:', packet?.type);
         if (RadiiNativeRadio?.sendBleMessage) {
           RadiiNativeRadio.sendBleMessage(peer.macAddress, jsonString).then((ok: boolean) => {
+            console.log('[NativeRadioTransport] sendBleMessage result:', ok);
             if (ok) delivered = true;
-          }).catch(() => {});
+          }).catch((err: any) => {
+            console.warn('[NativeRadioTransport] sendBleMessage exception:', err);
+          });
         }
         if (RadiiNativeRadio?.sendBluetoothMessage) {
           try {
-            const ok = await RadiiNativeRadio.sendBluetoothMessage(peer.macAddress, jsonString);
-            if (ok) delivered = true;
+            RadiiNativeRadio.sendBluetoothMessage(peer.macAddress, jsonString);
           } catch (e) {}
         }
       }

@@ -316,12 +316,11 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
                         .addManufacturerData(RADII_COMPANY_ID, mfgPayload)
                         .build()
 
-                    // Put the 128-bit Service UUID into scanResponseData where there is plenty of room
+                    // Scan Response: Include 16-bit base Service UUID (18 bytes <= 31 bytes strictly guaranteed)
                     val scanResponseData = AdvertiseData.Builder()
                         .setIncludeDeviceName(false)
                         .setIncludeTxPowerLevel(false)
                         .addServiceUuid(SERVICE_PARCEL_UUID)
-                        .addServiceUuid(NAME_PARCEL_UUID)
                         .build()
 
                     val callback = object : AdvertiseCallback() {
@@ -385,6 +384,11 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
         try {
             val bm = reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager ?: return
             val callback = object : BluetoothGattServerCallback() {
+                override fun onConnectionStateChange(device: BluetoothDevice?, status: Int, newState: Int) {
+                    super.onConnectionStateChange(device, status, newState)
+                    Log.d("RadiiRadio", "GATT Server incoming connection from ${device?.address}, status=$status, newState=$newState")
+                }
+
                 override fun onMtuChanged(device: BluetoothDevice?, mtu: Int) {
                     super.onMtuChanged(device, mtu)
                     Log.d("RadiiRadio", "GATT Server MTU negotiated: $mtu for ${device?.address}")
@@ -405,15 +409,24 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
                     }
                     if (value == null || value.isEmpty()) return
 
+                    Log.d("RadiiRadio", "GATT Server onCharacteristicWriteRequest from ${device?.address}: size=${value.size}b, prepared=$preparedWrite")
+
                     val devAddr = device?.address ?: "unknown"
-                    if (preparedWrite) {
-                        // Long write / execute write buffer for payloads exceeding standard ATT MTU
-                        val stream = gattWriteBuffers.getOrPut(devAddr) { ByteArrayOutputStream() }
-                        stream.write(value)
-                    } else {
-                        // Unicast payload received directly over radio
-                        val rawText = String(value, Charsets.UTF_8)
-                        dispatchIncomingMessage(rawText, "nearby")
+                    val stream = gattWriteBuffers.getOrPut(devAddr) { ByteArrayOutputStream() }
+                    stream.write(value)
+
+                    if (!preparedWrite) {
+                        val currentBytes = stream.toByteArray()
+                        val rawText = String(currentBytes, Charsets.UTF_8).trim()
+                        if (rawText.startsWith("{") && rawText.endsWith("}")) {
+                            try {
+                                JSONObject(rawText) // Verify JSON completeness
+                                gattWriteBuffers.remove(devAddr)
+                                dispatchIncomingMessage(rawText, "nearby")
+                            } catch (e: Exception) {
+                                // More chunks in progress
+                            }
+                        }
                     }
                 }
 
@@ -781,17 +794,56 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
                 val device = adapter.getRemoteDevice(macAddress)
                 val bytes = messageJson.toByteArray(Charsets.UTF_8)
                 var resolved = false
+                Log.d("RadiiRadio", "sendBleMessage START: target=$macAddress, payloadSize=${bytes.size}b")
 
                 val gattCallback = object : BluetoothGattCallback() {
+                    private var currentMtu = 23
+                    private var writeOffset = 0
+                    private var targetChar: BluetoothGattCharacteristic? = null
+
+                    private fun writeNextChunk(gatt: BluetoothGatt) {
+                        val char = targetChar ?: return
+                        val maxPayload = (currentMtu - 3).coerceAtLeast(20)
+
+                        if (writeOffset >= bytes.size) {
+                            Log.d("RadiiRadio", "sendBleMessage ALL CHUNKS WRITTEN successfully to $macAddress")
+                            if (!resolved) {
+                                resolved = true
+                                promise.resolve(true)
+                            }
+                            thread {
+                                try {
+                                    Thread.sleep(250)
+                                    gatt.disconnect()
+                                    gatt.close()
+                                } catch (e: Exception) {}
+                            }
+                            return
+                        }
+
+                        val remaining = bytes.size - writeOffset
+                        val chunkSize = Math.min(remaining, maxPayload)
+                        val chunk = ByteArray(chunkSize)
+                        System.arraycopy(bytes, writeOffset, chunk, 0, chunkSize)
+                        writeOffset += chunkSize
+
+                        char.value = chunk
+                        char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                        val ok = gatt.writeCharacteristic(char)
+                        Log.d("RadiiRadio", "sendBleMessage writeNextChunk: offset=$writeOffset/${bytes.size}, chunkSize=$chunkSize, writeResult=$ok")
+                        if (!ok && !resolved) {
+                            resolved = true
+                            promise.resolve(false)
+                        }
+                    }
+
                     override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
+                        Log.d("RadiiRadio", "sendBleMessage onConnectionStateChange: status=$status, newState=$newState")
                         if (newState == BluetoothGatt.STATE_CONNECTED) {
+                            // IMMEDIATELY discover services — do NOT lock behind onMtuChanged!
+                            gatt?.discoverServices()
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                                val ok = gatt?.requestMtu(512) ?: false
-                                if (!ok) {
-                                    gatt?.discoverServices()
-                                }
-                            } else {
-                                gatt?.discoverServices()
+                                try { gatt?.requestMtu(512) } catch (e: Exception) {}
                             }
                         } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
                             try { gatt?.close() } catch (e: Exception) {}
@@ -804,29 +856,21 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
 
                     override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
                         super.onMtuChanged(gatt, mtu, status)
-                        gatt?.discoverServices()
+                        Log.d("RadiiRadio", "sendBleMessage onMtuChanged: mtu=$mtu, status=$status")
+                        if (status == BluetoothGatt.GATT_SUCCESS && mtu > 23) {
+                            currentMtu = mtu
+                        }
                     }
 
                     override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
+                        Log.d("RadiiRadio", "sendBleMessage onServicesDiscovered: status=$status")
                         if (status == BluetoothGatt.GATT_SUCCESS && gatt != null) {
                             val service = gatt.getService(SERVICE_UUID)
                             val characteristic = service?.getCharacteristic(MESSAGE_CHAR_UUID)
+                            Log.d("RadiiRadio", "sendBleMessage target service=${service != null}, char=${characteristic != null}")
                             if (characteristic != null) {
-                                characteristic.value = bytes
-                                characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                                val success = gatt.writeCharacteristic(characteristic)
-                                if (!resolved) {
-                                    resolved = true
-                                    promise.resolve(success)
-                                }
-                                // Safety timeout: disconnect if onCharacteristicWrite is not invoked
-                                thread {
-                                    try {
-                                        Thread.sleep(600)
-                                        gatt.disconnect()
-                                        gatt.close()
-                                    } catch (e: Exception) {}
-                                }
+                                targetChar = characteristic
+                                writeNextChunk(gatt)
                                 return
                             }
                         }
@@ -843,12 +887,12 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
                         status: Int
                     ) {
                         super.onCharacteristicWrite(gatt, characteristic, status)
-                        thread {
-                            try {
-                                Thread.sleep(150)
-                                gatt?.disconnect()
-                                gatt?.close()
-                            } catch (e: Exception) {}
+                        Log.d("RadiiRadio", "sendBleMessage onCharacteristicWrite callback: status=$status")
+                        if (status == BluetoothGatt.GATT_SUCCESS && gatt != null) {
+                            writeNextChunk(gatt)
+                        } else if (!resolved) {
+                            resolved = true
+                            promise.resolve(false)
                         }
                     }
                 }
@@ -1011,7 +1055,7 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
         try {
             val wifi = reactContext.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             multicastLock = wifi?.createMulticastLock("radii_lock")?.apply {
-                setReferenceCounted(true)
+                setReferenceCounted(false)
                 acquire()
             }
         } catch (e: Exception) {
@@ -1081,7 +1125,9 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
                 udpSocket?.close()
                 udpSocket = null
                 try {
-                    multicastLock?.release()
+                    multicastLock?.let {
+                        if (it.isHeld) it.release()
+                    }
                 } catch (e: Exception) {}
             }
         }
