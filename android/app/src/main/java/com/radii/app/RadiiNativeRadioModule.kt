@@ -308,16 +308,18 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
                         System.arraycopy(nameBytes, 0, mfgPayload, 7, nameBytes.size)
                     }
 
+                    // Keep primaryData strictly <= 24 bytes so it NEVER exceeds the 31-byte hardware limit
                     val primaryData = AdvertiseData.Builder()
                         .setIncludeDeviceName(false)
                         .setIncludeTxPowerLevel(false)
                         .addManufacturerData(RADII_COMPANY_ID, mfgPayload)
-                        .addServiceUuid(SERVICE_PARCEL_UUID)
                         .build()
 
+                    // Put the 128-bit Service UUID into scanResponseData where there is plenty of room
                     val scanResponseData = AdvertiseData.Builder()
                         .setIncludeDeviceName(false)
                         .setIncludeTxPowerLevel(false)
+                        .addServiceUuid(SERVICE_PARCEL_UUID)
                         .addServiceUuid(NAME_PARCEL_UUID)
                         .build()
 
@@ -330,6 +332,27 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
                         override fun onStartFailure(errorCode: Int) {
                             super.onStartFailure(errorCode)
                             Log.e("RadiiRadio", "Radii BLE Advertiser failed code: $errorCode")
+                            // Self-healing fallback if OEM advertisement frame is hyper-strict
+                            if (errorCode == AdvertiseCallback.ADVERTISE_FAILED_DATA_TOO_LARGE) {
+                                try {
+                                    val compactPayload = ByteArray(1 + 6).apply {
+                                        this[0] = PROTOCOL_VERSION
+                                        System.arraycopy(shortIdBytes, 0, this, 1, 6)
+                                    }
+                                    val compactData = AdvertiseData.Builder()
+                                        .setIncludeDeviceName(false)
+                                        .setIncludeTxPowerLevel(false)
+                                        .addManufacturerData(RADII_COMPANY_ID, compactPayload)
+                                        .build()
+                                    bleAdvertiser?.startAdvertising(settings, compactData, scanResponseData, object : AdvertiseCallback() {
+                                        override fun onStartSuccess(s: AdvertiseSettings?) {
+                                            Log.d("RadiiRadio", "Fallback compact BLE Advertiser active successfully")
+                                        }
+                                    })
+                                } catch (e: Exception) {
+                                    Log.e("RadiiRadio", "Fallback advertising failed", e)
+                                }
+                            }
                         }
                     }
 
@@ -752,20 +775,42 @@ class RadiiNativeRadioModule(private val reactContext: ReactApplicationContext) 
                             val characteristic = service?.getCharacteristic(MESSAGE_CHAR_UUID)
                             if (characteristic != null) {
                                 characteristic.value = bytes
-                                characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                                characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                                 val success = gatt.writeCharacteristic(characteristic)
                                 if (!resolved) {
                                     resolved = true
                                     promise.resolve(success)
                                 }
-                                try { gatt.disconnect() } catch (e: Exception) {}
+                                // Safety timeout: disconnect if onCharacteristicWrite is not invoked
+                                thread {
+                                    try {
+                                        Thread.sleep(600)
+                                        gatt.disconnect()
+                                        gatt.close()
+                                    } catch (e: Exception) {}
+                                }
                                 return
                             }
                         }
-                        try { gatt?.disconnect() } catch (e: Exception) {}
+                        try { gatt?.disconnect(); gatt?.close() } catch (e: Exception) {}
                         if (!resolved) {
                             resolved = true
                             promise.resolve(false)
+                        }
+                    }
+
+                    override fun onCharacteristicWrite(
+                        gatt: BluetoothGatt?,
+                        characteristic: BluetoothGattCharacteristic?,
+                        status: Int
+                    ) {
+                        super.onCharacteristicWrite(gatt, characteristic, status)
+                        thread {
+                            try {
+                                Thread.sleep(150)
+                                gatt?.disconnect()
+                                gatt?.close()
+                            } catch (e: Exception) {}
                         }
                     }
                 }

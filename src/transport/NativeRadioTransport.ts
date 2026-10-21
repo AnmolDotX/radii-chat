@@ -392,7 +392,14 @@ export class NativeRadioTransport implements ITransport {
         } catch (e) {}
       }
 
-      // 3. Subnet Broadcast on Local Wi-Fi / Hotspot for rooms or media repair/control packets
+      // 3. Subnet Broadcast on Local Wi-Fi / Hotspot for rooms, media repair/control, or connection handshakes
+      const isConnectionHandshake = Boolean(
+        packet?.type === 'CONNECTION_REQUEST' ||
+        packet?.type === 'CONNECTION_ACCEPTED' ||
+        packet?.type === 'CONNECTION_DECLINED' ||
+        packet?.type === 'CONNECTION_CANCEL'
+      );
+
       const isMediaControl = Boolean(
         packet?.type === 'MEDIA_REQUEST_MISSING' ||
         packet?.type === 'MEDIA_STREAM_END' ||
@@ -403,23 +410,24 @@ export class NativeRadioTransport implements ITransport {
         packet?.type === 'MEDIA_TRANSFER_CANCEL'
       );
 
-      if ((isRoomOrBroadcast || isMediaControl) && RadiiNativeRadio?.broadcastUdpMessage) {
+      if ((isRoomOrBroadcast || isMediaControl || isConnectionHandshake) && RadiiNativeRadio?.broadcastUdpMessage) {
         try {
           RadiiNativeRadio.broadcastUdpMessage(jsonString);
           if (isMediaControl) delivered = true;
         } catch (e) {}
       }
 
-      // 4. For room control packets <= 500 bytes: prioritize BLE GATT immediately
-      if (isRoomOrBroadcast && peer?.macAddress && jsonString.length <= 500 && RadiiNativeRadio?.sendBleMessage) {
+      // 4. Fast-Path: Prioritize BLE GATT immediately for connection handshakes and small control packets (<= 500 bytes)
+      // BLE GATT delivers directly to the peer's random BLE address in ~50ms, bypassing the blocking 30s RFCOMM failure
+      if ((isConnectionHandshake || isRoomOrBroadcast || jsonString.length <= 500) && peer?.macAddress && RadiiNativeRadio?.sendBleMessage) {
         try {
           const ok = await RadiiNativeRadio.sendBleMessage(peer.macAddress, jsonString);
           if (ok) delivered = true;
         } catch (e) {}
       }
 
-      // 5. High-Bandwidth RFCOMM Stream (Bluetooth Classic)
-      if (peer?.macAddress && RadiiNativeRadio?.sendBluetoothMessage) {
+      // 5. High-Bandwidth RFCOMM Stream (Bluetooth Classic) — for payloads > 500 bytes (e.g. media chunks)
+      if (!delivered && peer?.macAddress && RadiiNativeRadio?.sendBluetoothMessage) {
         try {
           const ok = await RadiiNativeRadio.sendBluetoothMessage(peer.macAddress, jsonString);
           if (ok) delivered = true;
