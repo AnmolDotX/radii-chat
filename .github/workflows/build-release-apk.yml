@@ -27,6 +27,12 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
+      - name: Set up Android NDK (r27b)
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27b
+          link-to-sdk: true
+
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
