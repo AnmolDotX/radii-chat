@@ -41,3 +41,6 @@ example
 
 # Added by code-review-graph
 .code-review-graph/
+
+# Exclude 100MB+ universal APK (exceeds GitHub push limit)
+android/release/radii.apk

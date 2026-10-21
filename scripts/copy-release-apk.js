@@ -53,7 +53,9 @@ function formatBytes(bytes) {
 }
 
 const files = fs.readdirSync(sourceDir);
-const apkFiles = files.filter((f) => f.endsWith('.apk'));
+// Skip the universal 100MB+ radii.apk to comply with GitHub's 100MB file size limit.
+// We keep the architecture-specific splits (arm64-v8a at ~46MB and armeabi-v7a at ~39MB).
+const apkFiles = files.filter((f) => f.endsWith('.apk') && f !== 'radii.apk');
 
 if (apkFiles.length === 0) {
   console.error(`❌ No .apk files found in ${sourceDir}`);
