@@ -34,6 +34,32 @@ try {
     stdio: 'inherit',
   });
 
+  // Synchronize version to package.json
+  if (pkg.version !== versionName) {
+    pkg.version = versionName;
+    fs.writeFileSync(path.join(rootDir, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');
+  }
+
+  // Synchronize version to app.json
+  const appJsonPath = path.join(rootDir, 'app.json');
+  if (fs.existsSync(appJsonPath)) {
+    const appJson = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
+    if (appJson?.expo && appJson.expo.version !== versionName) {
+      appJson.expo.version = versionName;
+      fs.writeFileSync(appJsonPath, JSON.stringify(appJson, null, 2) + '\n');
+    }
+  }
+
+  // Synchronize static fallback in landing/index.html
+  const landingHtmlPath = path.join(rootDir, 'landing', 'index.html');
+  if (fs.existsSync(landingHtmlPath)) {
+    let html = fs.readFileSync(landingHtmlPath, 'utf8');
+    const cleanTag = versionName.startsWith('v') ? versionName : `v${versionName}`;
+    html = html.replace(/releases\/download\/[^/]+\/radii-arm64-v8a\.apk/g, `releases/download/${cleanTag}/radii-arm64-v8a.apk`);
+    html = html.replace(/<span class="version-tag"[^>]*>([^<]+)<\/span>/g, `<span class="version-tag" id="release-version-tag">${cleanTag} · 46 MB</span>`);
+    fs.writeFileSync(landingHtmlPath, html, 'utf8');
+  }
+
   // Run the copy script to sync to android/release/
   execSync(`node "${path.join(__dirname, 'copy-release-apk.js')}"`, {
     cwd: rootDir,
